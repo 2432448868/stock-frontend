@@ -62,14 +62,13 @@ td{font-size:.9rem}
 </div>
 
 <script>
-// 新浪财经 API + CORS 代理
-const SINA_API = 'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData';
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+// 本地后端 API
+const API_BASE = 'http://127.0.0.1:8787';
 
 const SECTOR_TYPES = {
-  industry: 'hangye',
-  concept: 'gainian',
-  region: 'diqu',
+  industry: 'm:90 t:2',
+  concept: 'm:999 t:2',
+  region: 'm:90 t:3',
 };
 
 let currentType = 'industry';
@@ -87,22 +86,11 @@ document.querySelectorAll('.tab').forEach(tab => {
 async function loadData() {
   tableBody.innerHTML = '<tr><td colspan="6" class="loading">加载中...</td></tr>';
   try {
-    const params = new URLSearchParams({
-      node: SECTOR_TYPES[currentType],
-      num: '50',
-      sort: 'changepercent',
-      asc: '0',
-      symbol: '',
-      _s_r_a: 'init',
-    });
+    const res = await fetch(`${API_BASE}?type=${currentType}&sort=f3&order=desc`);
+    const json = await res.json();
     
-    const url = `${CORS_PROXY}${encodeURIComponent(`${SINA_API}?${params}`)}`;
-    const res = await fetch(url);
-    const text = await res.text();
-    const json = JSON.parse(text);
-    
-    if (!Array.isArray(json)) throw new Error('API 数据异常');
-    renderTable(json);
+    if (!json.success) throw new Error(json.error || '请求失败');
+    renderTable(json.data.diff);
   } catch (error) {
     tableBody.innerHTML = `<tr><td colspan="6" class="error"><div>加载失败：${error.message}</div><button class="retry-btn" onclick="loadData()">重试</button></td></tr>`;
   }
@@ -113,9 +101,18 @@ function renderTable(data) {
     tableBody.innerHTML = '<tr><td colspan="6" class="loading">暂无数据</td></tr>';
     return;
   }
-  // 新浪 API 数据格式待适配，先显示原始数据
-  console.log('SINA Data:', data[0]);
-  tableBody.innerHTML = '<tr><td colspan="6" class="loading">数据格式待适配</td></tr>';
+  tableBody.innerHTML = data.map(item => {
+    const cls = item.changePercent > 0 ? 'up' : item.changePercent < 0 ? 'down' : 'flat';
+    const sign = item.changePercent > 0 ? '+' : '';
+    return `<tr>
+      <td><strong>${item.name}</strong><br><span style="font-size:.75rem;opacity:.5">${item.code}</span></td>
+      <td class="${cls}"><strong>${sign}${item.changePercent.toFixed(2)}%</strong></td>
+      <td class="${cls}">${sign}${item.change.toFixed(2)}</td>
+      <td class="up">${item.upCount}</td>
+      <td class="down">${item.downCount}</td>
+      <td>${item.turnoverRate ? item.turnoverRate.toFixed(2) : '-'}%</td>
+    </tr>`;
+  }).join('');
 }
 
 loadData();
