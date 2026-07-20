@@ -1,0 +1,36 @@
+name: Update Stock Data
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # 每小时整点运行
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Fetch stock data
+        run: |
+          mkdir -p data
+          
+          # 获取行业板块数据
+          curl -s "https://push2.eastmoney.com/api/qt/clist/get?fs=m:90+t:2&fid=f3&po=1&pz=50&pn=1&np=1&fltt=2&invt=2&fields=f1,f2,f3,f4,f12,f14,f15,f16,f17,f18,f20,f21,f104,f105,f106,f107,f128,f136,f140,f141" \
+            | jq '.data.diff' > data/industry.json
+          
+          # 获取概念板块数据
+          curl -s "https://push2.eastmoney.com/api/qt/clist/get?fs=m:90+t:3&fid=f3&po=1&pz=50&pn=1&np=1&fltt=2&invt=2&fields=f1,f2,f3,f4,f12,f14,f15,f16,f17,f18,f20,f21,f104,f105,f106,f107,f128,f136,f140,f141" \
+            | jq '.data.diff' > data/concept.json
+          
+          # 获取地域板块数据
+          curl -s "https://push2.eastmoney.com/api/qt/clist/get?fs=m:90+t:1&fid=f3&po=1&pz=50&pn=1&np=1&fltt=2&invt=2&fields=f1,f2,f3,f4,f12,f14,f15,f16,f17,f18,f20,f21,f104,f105,f106,f107,f128,f136,f140,f141" \
+            | jq '.data.diff' > data/region.json
+      
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --quiet && git diff --staged --quiet || git commit -m "chore: update stock data $(date '+%Y-%m-%d %H:%M:%S')"
+          git push
