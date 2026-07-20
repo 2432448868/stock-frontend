@@ -62,14 +62,14 @@ td{font-size:.9rem}
 </div>
 
 <script>
-// 东方财富 API + CORS 代理
-const EASTMONEY_API = 'https://push2.eastmoney.com/api/qt/clist/get';
-const CORS_PROXY = 'https://corsproxy.io/?';
+// 新浪财经 API + CORS 代理
+const SINA_API = 'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData';
+const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
 const SECTOR_TYPES = {
-  industry: 'm:90 t:2',
-  concept: 'm:999 t:2',
-  region: 'm:90 t:3',
+  industry: 'hangye',
+  concept: 'gainian',
+  region: 'diqu',
 };
 
 let currentType = 'industry';
@@ -88,23 +88,21 @@ async function loadData() {
   tableBody.innerHTML = '<tr><td colspan="6" class="loading">加载中...</td></tr>';
   try {
     const params = new URLSearchParams({
-      fs: SECTOR_TYPES[currentType],
-      fid: 'f3',
-      po: '1',
-      pz: '50',
-      pn: '1',
-      np: '1',
-      fltt: '2',
-      invt: '2',
-      fields: 'f1,f2,f3,f4,f12,f14,f15,f16,f17,f18,f20,f21,f104,f105,f106,f107,f128,f136,f140,f141',
+      node: SECTOR_TYPES[currentType],
+      num: '50',
+      sort: 'changepercent',
+      asc: '0',
+      symbol: '',
+      _s_r_a: 'init',
     });
     
-    const url = `${CORS_PROXY}${encodeURIComponent(`${EASTMONEY_API}?${params}`)}`;
+    const url = `${CORS_PROXY}${encodeURIComponent(`${SINA_API}?${params}`)}`;
     const res = await fetch(url);
-    const json = await res.json();
+    const text = await res.text();
+    const json = JSON.parse(text);
     
-    if (!json.data || !json.data.diff) throw new Error('API 数据异常');
-    renderTable(json.data.diff);
+    if (!Array.isArray(json)) throw new Error('API 数据异常');
+    renderTable(json);
   } catch (error) {
     tableBody.innerHTML = `<tr><td colspan="6" class="error"><div>加载失败：${error.message}</div><button class="retry-btn" onclick="loadData()">重试</button></td></tr>`;
   }
@@ -115,18 +113,9 @@ function renderTable(data) {
     tableBody.innerHTML = '<tr><td colspan="6" class="loading">暂无数据</td></tr>';
     return;
   }
-  tableBody.innerHTML = data.map(item => {
-    const cls = item.f3 > 0 ? 'up' : item.f3 < 0 ? 'down' : 'flat';
-    const sign = item.f3 > 0 ? '+' : '';
-    return `<tr>
-      <td><strong>${item.f14}</strong><br><span style="font-size:.75rem;opacity:.5">${item.f12}</span></td>
-      <td class="${cls}"><strong>${sign}${(item.f3 / 100).toFixed(2)}%</strong></td>
-      <td class="${cls}">${sign}${(item.f4 / 100).toFixed(2)}</td>
-      <td class="up">${item.f104 || 0}</td>
-      <td class="down">${item.f105 || 0}</td>
-      <td>${item.f8 ? (item.f8 / 100).toFixed(2) : '-'}%</td>
-    </tr>`;
-  }).join('');
+  // 新浪 API 数据格式待适配，先显示原始数据
+  console.log('SINA Data:', data[0]);
+  tableBody.innerHTML = '<tr><td colspan="6" class="loading">数据格式待适配</td></tr>';
 }
 
 loadData();
