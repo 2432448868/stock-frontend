@@ -62,8 +62,15 @@ td{font-size:.9rem}
 </div>
 
 <script>
-// Cloudflare Workers 地址
-const API_BASE = 'https://stock-backend-amber-six.vercel.app/api/index';
+// 东方财富 API + CORS 代理
+const EASTMONEY_API = 'https://push2.eastmoney.com/api/qt/clist/get';
+const CORS_PROXY = 'https://corsproxy.io/?';
+
+const SECTOR_TYPES = {
+  industry: 'm:90 t:2',
+  concept: 'm:999 t:2',
+  region: 'm:90 t:3',
+};
 
 let currentType = 'industry';
 const tableBody = document.getElementById('tableBody');
@@ -80,11 +87,23 @@ document.querySelectorAll('.tab').forEach(tab => {
 async function loadData() {
   tableBody.innerHTML = '<tr><td colspan="6" class="loading">加载中...</td></tr>';
   try {
-    const res = await fetch(`${API_BASE}?type=${currentType}&sort=f3&order=desc`);
-    const text = await res.text();
-    console.log('API Response:', text.substring(0, 500));
-    const json = JSON.parse(text);
-    if (!json.success) throw new Error(json.error || '请求失败');
+    const params = new URLSearchParams({
+      fs: SECTOR_TYPES[currentType],
+      fid: 'f3',
+      po: '1',
+      pz: '50',
+      pn: '1',
+      np: '1',
+      fltt: '2',
+      invt: '2',
+      fields: 'f1,f2,f3,f4,f12,f14,f15,f16,f17,f18,f20,f21,f104,f105,f106,f107,f128,f136,f140,f141',
+    });
+    
+    const url = `${CORS_PROXY}${encodeURIComponent(`${EASTMONEY_API}?${params}`)}`;
+    const res = await fetch(url);
+    const json = await res.json();
+    
+    if (!json.data || !json.data.diff) throw new Error('API 数据异常');
     renderTable(json.data.diff);
   } catch (error) {
     tableBody.innerHTML = `<tr><td colspan="6" class="error"><div>加载失败：${error.message}</div><button class="retry-btn" onclick="loadData()">重试</button></td></tr>`;
@@ -97,15 +116,15 @@ function renderTable(data) {
     return;
   }
   tableBody.innerHTML = data.map(item => {
-    const cls = item.changePercent > 0 ? 'up' : item.changePercent < 0 ? 'down' : 'flat';
-    const sign = item.changePercent > 0 ? '+' : '';
+    const cls = item.f3 > 0 ? 'up' : item.f3 < 0 ? 'down' : 'flat';
+    const sign = item.f3 > 0 ? '+' : '';
     return `<tr>
-      <td><strong>${item.name}</strong><br><span style="font-size:.75rem;opacity:.5">${item.code}</span></td>
-      <td class="${cls}"><strong>${sign}${item.changePercent.toFixed(2)}%</strong></td>
-      <td class="${cls}">${sign}${item.change.toFixed(2)}</td>
-      <td class="up">${item.upCount}</td>
-      <td class="down">${item.downCount}</td>
-      <td>${item.turnoverRate.toFixed(2)}%</td>
+      <td><strong>${item.f14}</strong><br><span style="font-size:.75rem;opacity:.5">${item.f12}</span></td>
+      <td class="${cls}"><strong>${sign}${(item.f3 / 100).toFixed(2)}%</strong></td>
+      <td class="${cls}">${sign}${(item.f4 / 100).toFixed(2)}</td>
+      <td class="up">${item.f104 || 0}</td>
+      <td class="down">${item.f105 || 0}</td>
+      <td>${item.f8 ? (item.f8 / 100).toFixed(2) : '-'}%</td>
     </tr>`;
   }).join('');
 }
