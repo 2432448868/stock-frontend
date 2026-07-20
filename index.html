@@ -90,7 +90,6 @@ async function loadData() {
     tableBody.innerHTML = `<tr><td colspan="6" class="error"><div>加载失败：${error.message}</div><button class="retry-btn" onclick="loadData()">重试</button></td></tr>`;
   }
 }
-}
 
 function renderTable(data) {
   if (!data || data.length === 0) {
