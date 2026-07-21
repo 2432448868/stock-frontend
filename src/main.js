@@ -40,8 +40,6 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
 setInterval(() => {
   const el = document.getElementById('statusText');
   const bj = getBeijingNow();
-  const h = bj.getUTCHours(), m = bj.getUTCMinutes(), s = bj.getUTCSeconds();
-  const timeStr = `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   if (isTradingTime()) {
     state.countdown--;
     if (state.countdown <= 0) {
@@ -54,9 +52,9 @@ setInterval(() => {
       document.querySelectorAll('#staleNotice, [style*="rgba(255,165,0"]').forEach(n => n.remove());
     }
     const cm = Math.floor(state.countdown / 60), cs = state.countdown % 60;
-    el.textContent = `东方财富 · 交易中 · ${timeStr} · ${cm}:${String(cs).padStart(2, '0')} 后刷新`;
+    el.textContent = `东方财富 · 交易中 · ${bj.timeStr} · ${cm}:${String(cs).padStart(2, '0')} 后刷新`;
   } else {
-    el.textContent = `东方财富 · 已休市 · ${timeStr}`;
+    el.textContent = `东方财富 · 已休市 · ${bj.timeStr}`;
     state.countdown = 1800;
   }
 }, 1000);

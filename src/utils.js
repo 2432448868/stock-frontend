@@ -38,19 +38,35 @@ export function formatMarketCap(v) {
   return String(v);
 }
 
-// 北京时间：返回一个 Date，使其 getUTCHours/getUTCMinutes 返回北京时间
-// 公式：北京时间 = 本地时间 + (8h - 本地时区偏移)
-// UTC+8 用户：偏移 = 8×60 + (-480) = 0，本地时间就是北京时间
-// UTC-5 用户：偏移 = 8×60 + 300 = 780min = 13h
-// UTC+0 用户：偏移 = 8×60 + 0 = 480min = 8h
+// 北京时间：返回 { hours, minutes, seconds, day, dateStr }
+// 使用 Intl API 直接获取 Asia/Shanghai 时区的时间，不依赖时区偏移计算
 export function getBeijingNow() {
   const now = new Date();
-  return new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000);
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+  const get = (type) => parts.find(p => p.type === type)?.value;
+  const hours = parseInt(get('hour'));
+  const minutes = parseInt(get('minute'));
+  const seconds = parseInt(get('second'));
+  const day = parseInt(get('day'));
+  const month = parseInt(get('month'));
+  const year = parseInt(get('year'));
+  return {
+    hours, minutes, seconds, day, month, year,
+    dateStr: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+    timeStr: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`,
+  };
 }
 
 // 交易时间判断
 export function isTradingTime() {
   const bj = getBeijingNow();
-  const t = bj.getUTCHours() * 60 + bj.getUTCMinutes();
-  return t >= 555 && t <= 905 && bj.getUTCDay() >= 1 && bj.getUTCDay() <= 5;
+  const t = bj.hours * 60 + bj.minutes;
+  // 上午 9:15 ~ 11:30，下午 13:00 ~ 15:00，周一到周五
+  const isWeekday = bj.day >= 1 && bj.day <= 5;
+  return isWeekday && ((t >= 555 && t <= 690) || (t >= 780 && t <= 900));
 }

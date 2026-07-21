@@ -190,21 +190,29 @@ async function fetchKline(secid, klt, lmt, retries = 4) {
 
 // ========== 节假日判断 ==========
 
-// 统一用 UTC 方法计算北京时间，避免浏览器时区差异
-// 公式：北京时间 = 本地时间 + (8h - 本地时区偏移)
-// UTC+8 用户：8×60 + (-480) = 0，本地时间就是北京时间
+// 北京时间：使用 Intl API 直接获取 Asia/Shanghai 时区的时间
 function getBeijingNow() {
   const now = new Date();
-  const bjMs = now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000;
-  return new Date(bjMs);
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+  const get = (type) => parts.find(p => p.type === type)?.value;
+  return {
+    hours: parseInt(get('hour')),
+    minutes: parseInt(get('minute')),
+    seconds: parseInt(get('second')),
+    day: parseInt(get('day')),
+    dateStr: `${get('year')}-${get('month')}-${get('day')}`,
+  };
 }
 
 function isTradingDay() {
   const bj = getBeijingNow();
-  const day = bj.getUTCDay();
-  if (day === 0 || day === 6) return false;
-  const dateStr = bj.toISOString().slice(0, 10);
-  return !HOLIDAYS_2026.has(dateStr);
+  if (bj.day === 0 || bj.day === 6) return false;
+  return !HOLIDAYS_2026.has(bj.dateStr);
 }
 
 // ========== 历史数据管理 ==========
@@ -214,7 +222,7 @@ function saveHistory(dataDir, type, data) {
   if (!fs.existsSync(histDir)) fs.mkdirSync(histDir, { recursive: true });
 
   const bj = getBeijingNow();
-  const dateStr = bj.toISOString().slice(0, 10);
+  const dateStr = bj.dateStr;
   const histFile = path.join(histDir, `${type}-${dateStr}.json`);
 
   fs.writeFileSync(histFile, JSON.stringify(data));
@@ -289,7 +297,7 @@ async function main() {
 
   // K 线数据（三大指数 × 三种周期，今天已存在则跳过）
   const bj = getBeijingNow();
-  const today = bj.toISOString().slice(0, 10);
+  const today = bj.dateStr;
   const klineConfigs = [
     { klt: 101, lmt: 120, suffix: 'daily' },
     { klt: 102, lmt: 52, suffix: 'weekly' },
@@ -303,7 +311,12 @@ async function main() {
       // 缓存判断：今天已抓过就跳过
       if (fs.existsSync(filePath)) {
         const mtime = new Date(fs.statSync(filePath).mtimeMs);
-        const mdate = new Date(mtime.getTime() + (8 * 60 - mtime.getTimezoneOffset()) * 60000).toISOString().slice(0, 10);
+        const mParts = new Intl.DateTimeFormat('zh-CN', {
+          timeZone: 'Asia/Shanghai',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+        }).formatToParts(mtime);
+        const mGet = (type) => mParts.find(p => p.type === type)?.value;
+        const mdate = `${mGet('year')}-${mGet('month')}-${mGet('day')}`;
         if (mdate === today) {
           console.log(`⏭️ ${fileName} 今天已抓取，跳过`);
           continue;
