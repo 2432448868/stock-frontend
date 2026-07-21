@@ -22,7 +22,7 @@ jobs:
           node-version: '23'
 
       - name: Fetch stock data
-        run: node fetch-data.js
+        run: node fetch-data.cjs
 
       - name: Commit and push if changed
         run: |
