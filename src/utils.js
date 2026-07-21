@@ -38,12 +38,14 @@ export function formatMarketCap(v) {
   return String(v);
 }
 
-// 北京时间（将本地时间转换为 UTC+8 时间表示）
-// 原理：Date 的 UTC 方法读取的是存储的 UTC 时间戳，
-// 加上 timezoneOffset 后，UTC 方法读取到的就是北京时间
+// 北京时间：返回一个 Date，使其 getUTCHours/getUTCMinutes 返回北京时间
+// 公式：北京时间 = 本地时间 + (8h - 本地时区偏移)
+// UTC+8 用户：偏移 = 8×60 + (-480) = 0，本地时间就是北京时间
+// UTC-5 用户：偏移 = 8×60 + 300 = 780min = 13h
+// UTC+0 用户：偏移 = 8×60 + 0 = 480min = 8h
 export function getBeijingNow() {
   const now = new Date();
-  return new Date(now.getTime() + now.getTimezoneOffset() * 60000 + 8 * 3600000);
+  return new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000);
 }
 
 // 交易时间判断

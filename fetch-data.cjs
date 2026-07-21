@@ -191,9 +191,11 @@ async function fetchKline(secid, klt, lmt, retries = 4) {
 // ========== 节假日判断 ==========
 
 // 统一用 UTC 方法计算北京时间，避免浏览器时区差异
+// 公式：北京时间 = 本地时间 + (8h - 本地时区偏移)
+// UTC+8 用户：8×60 + (-480) = 0，本地时间就是北京时间
 function getBeijingNow() {
   const now = new Date();
-  const bjMs = now.getTime() + (8 * 60 - now.getTimezoneOffset()) * 60000;
+  const bjMs = now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000;
   return new Date(bjMs);
 }
 
