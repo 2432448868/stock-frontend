@@ -48,27 +48,46 @@ const CAPITAL_FIELDS = ['f12', 'f14', 'f3', 'f62', 'f184', 'f66', 'f72', 'f104',
 
 // ========== API 请求 ==========
 
+// 模拟真实浏览器的完整请求头，避免被反爬识别
+const COMMON_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  'Accept': '*/*',
+  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Referer': 'https://quote.eastmoney.com/',
+  'Connection': 'keep-alive',
+};
+
+// 请求间延迟，避免短时间大量请求触发反爬
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 async function fetchPage(filterStr, fid, sort, fields, pageSize, page, retries = 3) {
   const params = new URLSearchParams({
     fs: filterStr, fid, po: sort,
     pz: String(pageSize), pn: String(page),
-    np: '1', fltt: '2', invt: '2', fields,
+    np: '1', fltt: '2', invt: '2', ut: 'fa5fd1402c7fe063136ef88a0db19a9f',
+    fields,
   });
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(`${EASTMONEY_API}?${params}`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': 'https://quote.eastmoney.com/',
-        },
-      });
-      const json = await res.json();
-      if (!json.data?.diff) throw new Error(`第 ${page} 页 API 数据异常`);
+      const res = await fetch(`${EASTMONEY_API}?${params}`, { headers: COMMON_HEADERS });
+      const text = await res.text();
+
+      // 诊断：如果返回 HTML 而不是 JSON，打印前 200 字符帮助排查
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}，响应：${text.slice(0, 200)}`);
+      }
+      if (text.startsWith('<')) {
+        throw new Error(`API 返回 HTML 而非 JSON，前 200 字符：${text.slice(0, 200)}`);
+      }
+
+      const json = JSON.parse(text);
+      if (!json.data?.diff) throw new Error(`第 ${page} 页 API 数据异常：${text.slice(0, 200)}`);
       return { items: json.data.diff, total: json.data.total };
     } catch (e) {
       if (attempt < retries) {
         console.log(`  ⚠️ 第 ${page} 页请求失败（${e.message}），${attempt}/${retries} 重试...`);
-        await new Promise(r => setTimeout(r, 2000 * attempt));
+        await sleep(3000 * attempt); // 指数退避：3s / 6s / 9s
       } else {
         throw e;
       }
@@ -153,22 +172,23 @@ async function fetchKline(secid, klt, lmt, retries = 3) {
   const params = new URLSearchParams({
     secid, fields1: 'f1,f2,f3', fields2: 'f51,f52,f53,f54,f55,f56',
     klt: String(klt), fqt: '1', end: '20500101', lmt: String(lmt),
+    ut: 'fa5fd1402c7fe063136ef88a0db19a9f',
   });
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(`${KLINE_API}?${params}`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': 'https://quote.eastmoney.com/',
-        },
-      });
-      const json = await res.json();
-      if (!json.data?.klines) throw new Error('K线数据异常');
+      const res = await fetch(`${KLINE_API}?${params}`, { headers: COMMON_HEADERS });
+      const text = await res.text();
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}，响应：${text.slice(0, 200)}`);
+      if (text.startsWith('<')) throw new Error(`API 返回 HTML：${text.slice(0, 200)}`);
+
+      const json = JSON.parse(text);
+      if (!json.data?.klines) throw new Error('K线数据异常：' + text.slice(0, 200));
       return { name: json.data.name, klines: json.data.klines };
     } catch (e) {
       if (attempt < retries) {
         console.log(`  ⚠️ K线请求失败（${e.message}），${attempt}/${retries} 重试...`);
-        await new Promise(r => setTimeout(r, 2000 * attempt));
+        await sleep(3000 * attempt);
       } else {
         throw e;
       }
@@ -240,27 +260,37 @@ async function main() {
   // 板块数据（只抓前端需要的字段 → 转换语义化命名 → 校验）
   for (const [type, filterStr] of Object.entries(SECTOR_TYPES)) {
     console.log(`Fetching ${type}...`);
-    const raw = await fetchAllPages(filterStr, SECTOR_FIELDS.join(','));
-    const all = raw.map(transformSector);
-    const valid = all.filter(validateSector);
-    const rejected = all.length - valid.length;
-    if (rejected > 0) console.log(`  ⚠️ 校验拦截 ${rejected} 条异常数据`);
-    fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify(valid, null, 2));
-    console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
-    saveHistory(dataDir, type, valid);
+    try {
+      const raw = await fetchAllPages(filterStr, SECTOR_FIELDS.join(','));
+      const all = raw.map(transformSector);
+      const valid = all.filter(validateSector);
+      const rejected = all.length - valid.length;
+      if (rejected > 0) console.log(`  ⚠️ 校验拦截 ${rejected} 条异常数据`);
+      fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify(valid, null, 2));
+      console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
+      saveHistory(dataDir, type, valid);
+    } catch (e) {
+      console.error(`❌ ${type} 抓取失败：${e.message}`);
+    }
+    await sleep(1500 + Math.random() * 1000); // 1.5~2.5s 随机延迟
   }
 
   // 资金流向数据（只取前 100 条 → 校验）
   for (const [type, filterStr] of Object.entries(CAPITAL_FLOW_TYPES)) {
     console.log(`Fetching ${type}...`);
-    const { items: raw } = await fetchPage(filterStr, 'f62', '1', CAPITAL_FIELDS.join(','), 100, 1);
-    const all = raw.map(transformCapital);
-    const valid = all.filter(validateCapital);
-    const rejected = all.length - valid.length;
-    if (rejected > 0) console.log(`  ⚠️ 校验拦截 ${rejected} 条异常数据`);
-    fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify(valid, null, 2));
-    console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
-    saveHistory(dataDir, type, valid);
+    try {
+      const { items: raw } = await fetchPage(filterStr, 'f62', '1', CAPITAL_FIELDS.join(','), 100, 1);
+      const all = raw.map(transformCapital);
+      const valid = all.filter(validateCapital);
+      const rejected = all.length - valid.length;
+      if (rejected > 0) console.log(`  ⚠️ 校验拦截 ${rejected} 条异常数据`);
+      fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify(valid, null, 2));
+      console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
+      saveHistory(dataDir, type, valid);
+    } catch (e) {
+      console.error(`❌ ${type} 抓取失败：${e.message}`);
+    }
+    await sleep(1500 + Math.random() * 1000);
   }
 
   // K 线数据（三大指数 × 三种周期 = 9 个文件）
@@ -272,13 +302,18 @@ async function main() {
   for (const idx of KLINE_INDICES) {
     for (const { klt, lmt, suffix } of klineConfigs) {
       console.log(`Fetching ${idx.id}-${suffix}...`);
-      const data = await fetchKline(idx.secid, klt, lmt);
-      if (!validateKline(data.klines)) {
-        console.log(`  ❌ K线数据校验失败，跳过保存`);
-        continue;
+      try {
+        const data = await fetchKline(idx.secid, klt, lmt);
+        if (!validateKline(data.klines)) {
+          console.log(`  ❌ K线数据校验失败，跳过保存`);
+        } else {
+          fs.writeFileSync(path.join(dataDir, `${idx.id}-${suffix}.json`), JSON.stringify(data));
+          console.log(`✓ ${idx.id}-${suffix}.json saved (${data.klines.length} items)`);
+        }
+      } catch (e) {
+        console.error(`❌ ${idx.id}-${suffix} 抓取失败：${e.message}`);
       }
-      fs.writeFileSync(path.join(dataDir, `${idx.id}-${suffix}.json`), JSON.stringify(data));
-      console.log(`✓ ${idx.id}-${suffix}.json saved (${data.klines.length} items)`);
+      await sleep(800 + Math.random() * 700); // 0.8~1.5s 随机延迟
     }
   }
 
