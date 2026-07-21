@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>wkl's Analysis of A-share data</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
 :root{--bg0:#0d1117;--bg1:#161b22;--bg2:#21262d;--border:#30363d;--t1:#e6edf3;--t2:#8b949e;--accent:#2563eb;--accent2:#3b82f6;--up:#ff4d4f;--up-bg:rgba(255,77,79,.08);--down:#00b96b;--down-bg:rgba(0,185,107,.08);--shadow:rgba(0,0,0,.3)}
 [data-theme="light"]{--bg0:#f0f2f5;--bg1:#ffffff;--bg2:#f6f8fa;--border:#d0d7de;--t1:#1f2328;--t2:#656d76;--accent:#2563eb;--accent2:#3b82f6;--up:#cf1322;--up-bg:rgba(207,19,34,.06);--down:#389e0d;--down-bg:rgba(56,158,13,.06);--shadow:rgba(0,0,0,.08)}
@@ -150,11 +149,11 @@ tbody tr:last-child td{border-bottom:none}
       <thead><tr>
         <th data-sort="rank" class="sorted">排名<span class="si">▲</span></th>
         <th data-sort="name">板块名称</th>
-        <th data-sort="f3">涨跌幅<span class="si"></span></th>
-        <th data-sort="f4">涨跌额<span class="si"></span></th>
-        <th data-sort="f104">上涨<span class="si"></span></th>
-        <th data-sort="f105">下跌<span class="si"></span></th>
-        <th data-sort="f20" class="hide-mobile">总市值<span class="si"></span></th>
+        <th data-sort="changePercent">涨跌幅<span class="si"></span></th>
+        <th data-sort="changeAmount">涨跌额<span class="si"></span></th>
+        <th data-sort="upCount">上涨<span class="si"></span></th>
+        <th data-sort="downCount">下跌<span class="si"></span></th>
+        <th data-sort="marketCap" class="hide-mobile">总市值<span class="si"></span></th>
         <th class="hide-mobile">领涨股</th>
       </tr></thead>
       <tbody id="sectorBody"><tr><td colspan="8" class="loading">加载中...</td></tr></tbody>
@@ -163,8 +162,9 @@ tbody tr:last-child td{border-bottom:none}
 </div>
 
 <script>
-// ========== 全局变量（提前声明，避免死区） ==========
+// ========== 全局变量 ==========
 let chart = null;
+let echartsReady = false;
 let selectedIdx = 0, currentKlt = '101';
 let klineCache = {};
 let sectorData = {};
@@ -172,24 +172,35 @@ let currentSectorType = 'industry';
 let sortColumn = 'rank', sortDir = 'asc', searchQuery = '';
 let countdown = 900;
 
+// ========== 本地缓存（错误降级用） ==========
+function saveCache(key, data) {
+  try { localStorage.setItem('cache_' + key, JSON.stringify({ data, ts: Date.now() })); } catch (e) {}
+}
+function loadCache(key) {
+  try {
+    const raw = localStorage.getItem('cache_' + key);
+    if (!raw) return null;
+    const { data, ts } = JSON.parse(raw);
+    return { data, stale: Date.now() - ts > 3600000 };
+  } catch (e) { return null; }
+}
+
 // ========== 主题切换 ==========
 const themeBtn = document.getElementById('themeToggle');
 function setTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   themeBtn.textContent = theme === 'light' ? '☀️' : '🌙';
   localStorage.setItem('theme', theme);
-  // 同步切换 ECharts 主题
-  if (chart) {
+  if (chart && echartsReady) {
     chart.dispose();
     chart = echarts.init(document.getElementById('klineChart'), theme === 'light' ? undefined : 'dark');
     klineCache = {};
     loadChartData(selectedIdx, currentKlt);
   }
 }
-// 初始化：读取 localStorage 或跟随系统
 const savedTheme = localStorage.getItem('theme');
-if (savedTheme) { setTheme(savedTheme); }
-else if (window.matchMedia('(prefers-color-scheme: light)').matches) { setTheme('light'); }
+if (savedTheme) setTheme(savedTheme);
+else if (window.matchMedia('(prefers-color-scheme: light)').matches) setTheme('light');
 themeBtn.addEventListener('click', () => {
   const current = document.documentElement.getAttribute('data-theme');
   setTheme(current === 'light' ? 'dark' : 'light');
@@ -203,6 +214,17 @@ const INDICES = [
   { secid: '0.399006', name: '创业板指' },
 ];
 
+// ========== ECharts 懒加载 ==========
+function loadECharts() {
+  if (echartsReady) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = 'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js';
+    el.onload = () => { echartsReady = true; resolve(); };
+    el.onerror = () => reject(new Error('ECharts 加载失败'));
+    document.head.appendChild(el);
+  });
+}
 
 // ========== 导航切换 ==========
 document.querySelectorAll('.nav-tab').forEach(tab => {
@@ -211,7 +233,7 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
-    if (tab.dataset.tab === 'market' && !chart) initChart();
+    if (tab.dataset.tab === 'market' && !chart) { loadECharts().then(initChart); }
   });
 });
 
@@ -220,7 +242,7 @@ function jsonp(url, timeout = 8000) {
   return new Promise((resolve, reject) => {
     const cbName = '_jcb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
     const timer = setTimeout(() => { cleanup(); reject(new Error('JSONP 请求超时')); }, timeout);
-    function cleanup() { clearTimeout(timer); delete window[cbName]; const s = document.getElementById(cbName); if (s) s.remove(); }
+    function cleanup() { clearTimeout(timer); delete window[cbName]; document.getElementById(cbName)?.remove(); }
     window[cbName] = data => { cleanup(); resolve(data); };
     const el = document.createElement('script');
     el.id = cbName;
@@ -242,10 +264,9 @@ async function loadKline(secid, klt) {
 }
 
 function renderIndexCards(klineData) {
-  const cards = document.querySelectorAll('.index-card');
-  cards.forEach((card, i) => {
+  document.querySelectorAll('.index-card').forEach((card, i) => {
     const kl = klineData[i]?.data?.klines;
-    if (!kl || !kl.length) return;
+    if (!kl?.length) return;
     const latest = kl[kl.length - 1].split(',');
     const prev = kl.length > 1 ? parseFloat(kl[kl.length - 2].split(',')[2]) : parseFloat(latest[1]);
     const close = parseFloat(latest[2]);
@@ -270,28 +291,20 @@ function initChart() {
 async function loadChartData(idx, klt) {
   if (!chart) return;
   const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-  const txtColor = isLight ? '#1f2328' : '#e6edf3';
-  const maskColor = isLight ? 'rgba(240,242,245,.8)' : 'rgba(13,17,23,.8)';
-  chart.showLoading({ text: '加载中...', color: '#2563eb', textColor: txtColor, maskColor });
+  chart.showLoading({ text: '加载中...', color: '#2563eb', textColor: isLight ? '#1f2328' : '#e6edf3', maskColor: isLight ? 'rgba(240,242,245,.8)' : 'rgba(13,17,23,.8)' });
   try {
     const result = await loadKline(INDICES[idx].secid, klt);
     const klines = result.data.klines.map(k => k.split(','));
     const dates = klines.map(k => k[0]);
-    const closes = klines.map(k => parseFloat(k[2]));
-    const opens = klines.map(k => parseFloat(k[1]));
-    const highs = klines.map(k => parseFloat(k[3]));
-    const lows = klines.map(k => parseFloat(k[4]));
-    const volumes = klines.map(k => parseFloat(k[5]));
+    const closes = klines.map(k => +k[2]);
+    const opens = klines.map(k => +k[1]);
+    const volumes = klines.map(k => +k[5]);
 
     if (klt === '1') {
-      // 分时图
       chart.setOption({
         backgroundColor: 'transparent',
         tooltip: { trigger: 'axis', backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: '#e6edf3', fontSize: 12 } },
-        grid: [
-          { left: 60, right: 20, top: 20, height: '60%' },
-          { left: 60, right: 20, top: '78%', height: '16%' },
-        ],
+        grid: [{ left: 60, right: 20, top: 20, height: '60%' }, { left: 60, right: 20, top: '78%', height: '16%' }],
         xAxis: [
           { type: 'category', data: dates, gridIndex: 0, axisLine: { lineStyle: { color: '#30363d' } }, axisLabel: { color: '#8b949e', fontSize: 10 }, boundaryGap: false },
           { type: 'category', data: dates, gridIndex: 1, axisLine: { lineStyle: { color: '#30363d' } }, axisLabel: { show: false }, boundaryGap: false },
@@ -301,29 +314,16 @@ async function loadChartData(idx, klt) {
           { type: 'value', gridIndex: 1, splitLine: { show: false }, axisLabel: { show: false }, scale: true },
         ],
         series: [
-          {
-            name: '价格', type: 'line', data: closes, xAxisIndex: 0, yAxisIndex: 0,
-            smooth: true, symbol: 'none', lineStyle: { color: '#2563eb', width: 2 },
-            areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(37,99,235,.3)' }, { offset: 1, color: 'rgba(37,99,235,.02)' },
-            ]) },
-          },
-          {
-            name: '成交量', type: 'bar', data: volumes, xAxisIndex: 1, yAxisIndex: 1,
-            itemStyle: { color: 'rgba(131,56,236,.4)' },
-          },
+          { name: '价格', type: 'line', data: closes, xAxisIndex: 0, yAxisIndex: 0, smooth: true, symbol: 'none', lineStyle: { color: '#2563eb', width: 2 }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(37,99,235,.3)' }, { offset: 1, color: 'rgba(37,99,235,.02)' }]) } },
+          { name: '成交量', type: 'bar', data: volumes.map((v, i) => ({ value: v, itemStyle: { color: closes[i] >= opens[i] ? 'rgba(255,77,79,.4)' : 'rgba(0,185,107,.4)' } })), xAxisIndex: 1, yAxisIndex: 1 },
         ],
       }, true);
     } else {
-      // K线图
-      const ohlc = klines.map(k => [parseFloat(k[1]), parseFloat(k[2]), parseFloat(k[4]), parseFloat(k[3])]); // open,close,low,high
+      const ohlc = klines.map(k => [+k[1], +k[2], +k[4], +k[3]]);
       chart.setOption({
         backgroundColor: 'transparent',
         tooltip: { trigger: 'axis', backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: '#e6edf3', fontSize: 12 } },
-        grid: [
-          { left: 60, right: 20, top: 20, height: '60%' },
-          { left: 60, right: 20, top: '78%', height: '16%' },
-        ],
+        grid: [{ left: 60, right: 20, top: 20, height: '60%' }, { left: 60, right: 20, top: '78%', height: '16%' }],
         xAxis: [
           { type: 'category', data: dates, gridIndex: 0, axisLine: { lineStyle: { color: '#30363d' } }, axisLabel: { color: '#8b949e', fontSize: 10 }, boundaryGap: true },
           { type: 'category', data: dates, gridIndex: 1, axisLine: { lineStyle: { color: '#30363d' } }, axisLabel: { show: false }, boundaryGap: true },
@@ -337,16 +337,8 @@ async function loadChartData(idx, klt) {
           { type: 'slider', xAxisIndex: [0, 1], bottom: 5, height: 16, borderColor: '#30363d', fillerColor: 'rgba(37,99,235,.15)', handleStyle: { color: '#2563eb' }, textStyle: { color: '#8b949e' } },
         ],
         series: [
-          {
-            name: 'K线', type: 'candlestick', data: ohlc, xAxisIndex: 0, yAxisIndex: 0,
-            itemStyle: { color: '#ff4d4f', color0: '#00b96b', borderColor: '#ff4d4f', borderColor0: '#00b96b' },
-          },
-          {
-            name: '成交量', type: 'bar', data: volumes.map((v, i) => ({
-              value: v,
-              itemStyle: { color: closes[i] >= opens[i] ? 'rgba(255,77,79,.5)' : 'rgba(0,185,107,.5)' },
-            })), xAxisIndex: 1, yAxisIndex: 1,
-          },
+          { name: 'K线', type: 'candlestick', data: ohlc, xAxisIndex: 0, yAxisIndex: 0, itemStyle: { color: '#ff4d4f', color0: '#00b96b', borderColor: '#ff4d4f', borderColor0: '#00b96b' } },
+          { name: '成交量', type: 'bar', data: volumes.map((v, i) => ({ value: v, itemStyle: { color: closes[i] >= opens[i] ? 'rgba(255,77,79,.5)' : 'rgba(0,185,107,.5)' } })), xAxisIndex: 1, yAxisIndex: 1 },
         ],
       }, true);
     }
@@ -357,7 +349,6 @@ async function loadChartData(idx, klt) {
   }
 }
 
-// 指数卡片点击
 document.querySelectorAll('.index-card').forEach(card => {
   card.addEventListener('click', () => {
     document.querySelectorAll('.index-card').forEach(c => c.classList.remove('selected'));
@@ -368,7 +359,6 @@ document.querySelectorAll('.index-card').forEach(card => {
   });
 });
 
-// K线周期切换
 document.querySelectorAll('.chart-btn[data-klt]').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.chart-btn[data-klt]').forEach(b => b.classList.remove('active'));
@@ -379,15 +369,13 @@ document.querySelectorAll('.chart-btn[data-klt]').forEach(btn => {
   });
 });
 
-// 初始化大盘数据
 (async function initMarket() {
   try {
+    await loadECharts();
     const results = await Promise.all(INDICES.map(idx => loadKline(idx.secid, '101')));
     renderIndexCards(results);
     initChart();
-  } catch (e) {
-    console.error('大盘数据加载失败:', e);
-  }
+  } catch (e) { console.error('大盘数据加载失败:', e); }
 })();
 
 // ========== 资金流向 ==========
@@ -409,25 +397,33 @@ async function loadCapitalFlow() {
     const res = await fetch(`${DATA_PATH}/capital-${currentCapitalType}.json?t=${Date.now()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    saveCache('capital-' + currentCapitalType, data);
     renderCapitalOverview(data);
     renderCapitalTable(data);
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="9" class="error"><div>加载失败：${e.message}</div><button class="retry-btn" onclick="loadCapitalFlow()">重试</button></td></tr>`;
+    const cached = loadCache('capital-' + currentCapitalType);
+    if (cached) {
+      renderCapitalOverview(cached.data);
+      renderCapitalTable(cached.data);
+      document.getElementById('capitalOverview').insertAdjacentHTML('afterend',
+        `<div style="text-align:center;padding:6px;font-size:.75rem;color:var(--t2);background:rgba(255,165,0,.1);border-radius:8px;margin-bottom:12px">⚠️ 数据加载失败，显示缓存数据（${new Date(cached.ts).toLocaleTimeString('zh-CN')}）</div>`);
+    } else {
+      tbody.innerHTML = `<tr><td colspan="9" class="error"><div>加载失败：${e.message}</div><button class="retry-btn" onclick="loadCapitalFlow()">重试</button></td></tr>`;
+    }
   }
 }
 
 function renderCapitalOverview(data) {
   let totalIn = 0, totalOut = 0, upCount = 0, downCount = 0;
   data.forEach(d => {
-    const flow = d.f62 ?? 0;
+    const flow = d.mainNetFlow ?? 0;
     if (flow > 0) totalIn += flow; else totalOut += Math.abs(flow);
-    if ((d.f3 ?? 0) > 0) upCount++; else if ((d.f3 ?? 0) < 0) downCount++;
+    if ((d.changePercent ?? 0) > 0) upCount++; else if ((d.changePercent ?? 0) < 0) downCount++;
   });
   const net = totalIn - totalOut;
-  const netStr = formatAmount(net);
   const cls = net > 0 ? 'up' : net < 0 ? 'down' : 'flat';
   document.getElementById('capitalOverview').innerHTML = `
-    <div class="ov-item"><span class="label">主力净流入</span><span class="val ${cls}">${netStr}</span></div>
+    <div class="ov-item"><span class="label">主力净流入</span><span class="val ${cls}">${formatAmount(net)}</span></div>
     <div class="ov-item"><span class="label">流入总额</span><span class="val up">${formatAmount(totalIn)}</span></div>
     <div class="ov-item"><span class="label">流出总额</span><span class="val down">${formatAmount(totalOut)}</span></div>
     <div class="ov-item"><span class="label">上涨板块</span><span class="val up">${upCount}</span></div>
@@ -436,31 +432,24 @@ function renderCapitalOverview(data) {
 }
 
 function renderCapitalTable(data) {
-  const maxFlow = Math.max(...data.map(d => Math.abs(d.f62 ?? 0)));
+  const maxFlow = Math.max(...data.map(d => Math.abs(d.mainNetFlow ?? 0)));
   document.getElementById('capitalBody').innerHTML = data.map((d, i) => {
-    const flow = d.f62 ?? 0;
-    const flowStr = formatAmount(flow);
+    const flow = d.mainNetFlow ?? 0;
     const cls = flow > 0 ? 'up' : flow < 0 ? 'down' : 'flat';
-    const pct = d.f184 ?? 0;
     const barWidth = Math.max(2, (Math.abs(flow) / maxFlow) * 80);
-    const superFlow = d.f66 ? formatAmount(d.f66) : '-';
-    const bigFlow = d.f72 ? formatAmount(d.f72) : '-';
-    const changePct = (d.f3 ?? 0) / 100;
-    const changeCls = changePct > 0 ? 'up' : changePct < 0 ? 'down' : 'flat';
-    const sign = changePct > 0 ? '+' : '';
+    const cp = d.changePercent ?? 0;
+    const cpCls = cp > 0 ? 'up' : cp < 0 ? 'down' : 'flat';
+    const sign = cp > 0 ? '+' : '';
     return `<tr>
       <td style="opacity:.5;font-size:.75rem;text-align:center">${i + 1}</td>
-      <td><strong>${d.f14}</strong><br><span class="sector-code">${d.f12}</span></td>
-      <td class="${changeCls}" style="font-weight:600">${sign}${changePct.toFixed(2)}%</td>
-      <td class="${cls}" style="font-weight:700">${flowStr}</td>
-      <td>
-        <span class="${cls}">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span>
-        <div class="flow-bar" style="width:${barWidth}px;background:${flow > 0 ? 'var(--up)' : 'var(--down)'};opacity:.5"></div>
-      </td>
-      <td class="hide-mobile ${cls}">${superFlow}</td>
-      <td class="hide-mobile ${cls}">${bigFlow}</td>
-      <td class="up">${d.f104 ?? 0}</td>
-      <td class="down">${d.f105 ?? 0}</td>
+      <td><strong>${d.name}</strong><br><span class="sector-code">${d.code}</span></td>
+      <td class="${cpCls}" style="font-weight:600">${sign}${cp.toFixed(2)}%</td>
+      <td class="${cls}" style="font-weight:700">${formatAmount(flow)}</td>
+      <td><span class="${cls}">${(d.mainPercent ?? 0) >= 0 ? '+' : ''}${(d.mainPercent ?? 0).toFixed(2)}%</span><div class="flow-bar" style="width:${barWidth}px;background:${flow > 0 ? 'var(--up)' : 'var(--down)'};opacity:.5"></div></td>
+      <td class="hide-mobile ${cls}">${formatAmount(d.superNetFlow ?? 0)}</td>
+      <td class="hide-mobile ${cls}">${formatAmount(d.bigNetFlow ?? 0)}</td>
+      <td class="up">${d.upCount ?? 0}</td>
+      <td class="down">${d.downCount ?? 0}</td>
     </tr>`;
   }).join('');
 }
@@ -489,7 +478,7 @@ document.querySelectorAll('.sector-type-btn').forEach(btn => {
 document.querySelectorAll('#panel-sector thead th[data-sort]').forEach(th => {
   th.addEventListener('click', () => {
     const col = th.dataset.sort;
-    if (sortColumn === col) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
+    if (sortColumn === col) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
     else { sortColumn = col; sortDir = col === 'name' ? 'asc' : 'desc'; }
     renderSector();
   });
@@ -509,9 +498,18 @@ async function loadSectorData() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     sectorData[currentSectorType] = data;
+    saveCache('sector-' + currentSectorType, data);
     renderSector();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="8" class="error"><div>加载失败：${e.message}</div><button class="retry-btn" onclick="loadSectorData()">重试</button></td></tr>`;
+    const cached = loadCache('sector-' + currentSectorType);
+    if (cached) {
+      sectorData[currentSectorType] = cached.data;
+      renderSector();
+      document.getElementById('sectorOverview').insertAdjacentHTML('afterend',
+        `<div id="staleNotice" style="text-align:center;padding:6px;font-size:.75rem;color:var(--t2);background:rgba(255,165,0,.1);border-radius:8px;margin-bottom:8px">⚠️ 数据加载失败，显示缓存数据（${new Date(cached.ts).toLocaleTimeString('zh-CN')}）</div>`);
+    } else {
+      tbody.innerHTML = `<tr><td colspan="8" class="error"><div>加载失败：${e.message}</div><button class="retry-btn" onclick="loadSectorData()">重试</button></td></tr>`;
+    }
   }
 }
 
@@ -520,52 +518,43 @@ function renderSector() {
   if (!data) return;
   let filtered = data;
   if (searchQuery) {
-    filtered = data.filter(d => (d.f14 || '').toLowerCase().includes(searchQuery) || (d.f12 || '').toLowerCase().includes(searchQuery));
+    filtered = data.filter(d => (d.name || '').toLowerCase().includes(searchQuery) || (d.code || '').toLowerCase().includes(searchQuery));
   }
+  const fieldMap = { rank: null, name: 'name', changePercent: 'changePercent', changeAmount: 'changeAmount', marketCap: 'marketCap', upCount: 'upCount', downCount: 'downCount' };
   const sorted = [...filtered].sort((a, b) => {
     let va, vb;
-    switch (sortColumn) {
-      case 'rank': va = data.indexOf(a); vb = data.indexOf(b); break;
-      case 'name': va = a.f14 || ''; vb = b.f14 || ''; break;
-      case 'f3': va = a.f3 ?? 0; vb = b.f3 ?? 0; break;
-      case 'f4': va = a.f4 ?? 0; vb = b.f4 ?? 0; break;
-      case 'f20': va = a.f20 ?? 0; vb = b.f20 ?? 0; break;
-      case 'f104': va = a.f104 ?? 0; vb = b.f104 ?? 0; break;
-      case 'f105': va = a.f105 ?? 0; vb = b.f105 ?? 0; break;
-      default: va = 0; vb = 0;
-    }
+    if (sortColumn === 'rank') { va = data.indexOf(a); vb = data.indexOf(b); }
+    else if (sortColumn === 'name') { va = a.name || ''; vb = b.name || ''; }
+    else { const f = fieldMap[sortColumn]; va = a[f] ?? 0; vb = b[f] ?? 0; }
     if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb, 'zh') : vb.localeCompare(va, 'zh');
     return sortDir === 'asc' ? va - vb : vb - va;
   });
   renderSectorOverview(filtered);
   updateSortIcons();
-  renderSectorTable(sorted, data);
+  renderSectorTable(sorted);
 }
 
-function renderSectorTable(data, allData) {
+function renderSectorTable(data) {
   const tbody = document.getElementById('sectorBody');
   if (!data.length) { tbody.innerHTML = '<tr><td colspan="8" class="no-data">无匹配结果</td></tr>'; return; }
   tbody.innerHTML = data.map((item, idx) => {
-    const pct = (item.f3 ?? 0) / 100;
-    const amt = (item.f4 ?? 0) / 100;
-    const cls = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
-    const bg = pct > 0 ? 'up-bg' : pct < 0 ? 'down-bg' : '';
-    const sign = pct > 0 ? '+' : '';
-    const cap = item.f20 ? formatMarketCap(item.f20) : '-';
-    const lcPct = item.f136 ? (item.f136 / 100) : 0;
-    const lcCls = lcPct > 0 ? 'up' : lcPct < 0 ? 'down' : 'flat';
-    const lcSign = lcPct > 0 ? '+' : '';
+    const cp = item.changePercent ?? 0;
+    const cls = cp > 0 ? 'up' : cp < 0 ? 'down' : 'flat';
+    const bg = cp > 0 ? 'up-bg' : cp < 0 ? 'down-bg' : '';
+    const sign = cp > 0 ? '+' : '';
+    const lcCls = item.leadingChange > 0 ? 'up' : item.leadingChange < 0 ? 'down' : 'flat';
+    const lcSign = item.leadingChange > 0 ? '+' : '';
     return `<tr class="${bg}">
       <td style="opacity:.5;font-size:.75rem;text-align:center">${idx + 1}</td>
-      <td><strong>${item.f14}</strong><br><span class="sector-code">${item.f12}</span></td>
-      <td class="${cls}" style="font-weight:700">${sign}${pct.toFixed(2)}%</td>
-      <td class="${cls}">${sign}${amt.toFixed(2)}</td>
-      <td class="up">${item.f104 ?? 0}</td>
-      <td class="down">${item.f105 ?? 0}</td>
-      <td class="hide-mobile">${cap}</td>
+      <td><strong>${item.name}</strong><br><span class="sector-code">${item.code}</span></td>
+      <td class="${cls}" style="font-weight:700">${sign}${cp.toFixed(2)}%</td>
+      <td class="${cls}">${sign}${(item.changeAmount ?? 0).toFixed(2)}</td>
+      <td class="up">${item.upCount ?? 0}</td>
+      <td class="down">${item.downCount ?? 0}</td>
+      <td class="hide-mobile">${item.marketCap ? formatMarketCap(item.marketCap) : '-'}</td>
       <td class="hide-mobile">
-        <div style="font-weight:500">${item.f128 || '-'}</div>
-        ${item.f136 ? `<div style="font-size:.75rem" class="${lcCls}">${lcSign}${lcPct.toFixed(2)}%</div>` : ''}
+        <div style="font-weight:500">${item.leadingStock || '-'}</div>
+        ${item.leadingChange ? `<div style="font-size:.75rem" class="${lcCls}">${lcSign}${item.leadingChange.toFixed(2)}%</div>` : ''}
       </td>
     </tr>`;
   }).join('');
@@ -573,9 +562,9 @@ function renderSectorTable(data, allData) {
 
 function renderSectorOverview(data) {
   let up = 0, down = 0, flat = 0, sum = 0;
-  data.forEach(d => { const p = (d.f3 ?? 0) / 100; sum += p; if (p > 0) up++; else if (p < 0) down++; else flat++; });
+  data.forEach(d => { const p = d.changePercent ?? 0; sum += p; if (p > 0) up++; else if (p < 0) down++; else flat++; });
   const avg = data.length ? sum / data.length : 0;
-  const s = [...data].sort((a, b) => (b.f3 ?? 0) - (a.f3 ?? 0));
+  const s = [...data].sort((a, b) => (b.changePercent ?? 0) - (a.changePercent ?? 0));
   const avgCls = avg > 0 ? 'up' : avg < 0 ? 'down' : 'flat';
   document.getElementById('sectorOverview').innerHTML = `
     <div class="ov-item"><span class="label">板块总数</span><span class="val">${data.length}</span></div>
@@ -583,8 +572,8 @@ function renderSectorOverview(data) {
     <div class="ov-item"><span class="label">下跌</span><span class="val down">${down}</span></div>
     <div class="ov-item"><span class="label">平盘</span><span class="val flat">${flat}</span></div>
     <div class="ov-item"><span class="label">平均涨幅</span><span class="val ${avgCls}">${avg >= 0 ? '+' : ''}${avg.toFixed(2)}%</span></div>
-    <div class="ov-item hide-mobile"><span class="label">最强</span><span class="val up">${s[0]?.f14 || '-'}</span></div>
-    <div class="ov-item hide-mobile"><span class="label">最弱</span><span class="val down">${s[s.length - 1]?.f14 || '-'}</span></div>
+    <div class="ov-item hide-mobile"><span class="label">最强</span><span class="val up">${s[0]?.name || '-'}</span></div>
+    <div class="ov-item hide-mobile"><span class="label">最弱</span><span class="val down">${s[s.length - 1]?.name || '-'}</span></div>
   `;
 }
 
@@ -622,12 +611,14 @@ setInterval(() => {
       loadSectorData();
       loadCapitalFlow();
       countdown = 900;
+      // 移除过期提示
+      document.querySelectorAll('#staleNotice, [style*="rgba(255,165,0"]').forEach(n => n.remove());
     }
     const m = Math.floor(countdown / 60), s = countdown % 60;
     el.textContent = `东方财富 · 交易中 · ${m}:${String(s).padStart(2, '0')} 后刷新`;
   } else {
     el.textContent = '东方财富 · 已休市';
-    countdown = 300;
+    countdown = 900;
   }
 }, 1000);
 
