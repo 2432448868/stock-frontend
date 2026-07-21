@@ -163,6 +163,15 @@ tbody tr:last-child td{border-bottom:none}
 </div>
 
 <script>
+// ========== 全局变量（提前声明，避免死区） ==========
+let chart = null;
+let selectedIdx = 0, currentKlt = '101';
+let klineCache = {};
+let sectorData = {};
+let currentSectorType = 'industry';
+let sortColumn = 'rank', sortDir = 'asc', searchQuery = '';
+let countdown = 300;
+
 // ========== 主题切换 ==========
 const themeBtn = document.getElementById('themeToggle');
 function setTheme(theme) {
@@ -194,14 +203,6 @@ const INDICES = [
   { secid: '0.399006', name: '创业板指' },
 ];
 
-// ========== 全局状态 ==========
-let sectorData = {};
-let currentSectorType = 'industry';
-let sortColumn = 'rank', sortDir = 'asc', searchQuery = '';
-let selectedIdx = 0, currentKlt = '101';
-let klineCache = {};
-let chart = null;
-let countdown = 300;
 
 // ========== 导航切换 ==========
 document.querySelectorAll('.nav-tab').forEach(tab => {
