@@ -120,6 +120,33 @@ function transformCapital(raw) {
   };
 }
 
+// ========== 数据校验（异常数据不入库） ==========
+
+function validateSector(item) {
+  if (!item.code || !item.name) return false;
+  if (typeof item.changePercent !== 'number' || isNaN(item.changePercent)) return false;
+  if (item.changePercent > 22 || item.changePercent < -22) return false; // 涨跌停 ±20% + 容差
+  if (item.marketCap < 0) return false;
+  if (item.upCount < 0 || item.downCount < 0) return false;
+  return true;
+}
+
+function validateCapital(item) {
+  if (!item.code || !item.name) return false;
+  if (typeof item.mainNetFlow !== 'number' || isNaN(item.mainNetFlow)) return false;
+  if (typeof item.changePercent !== 'number' || isNaN(item.changePercent)) return false;
+  return true;
+}
+
+function validateKline(klines) {
+  if (!Array.isArray(klines) || klines.length === 0) return false;
+  // 检查每条 K 线格式：日期,开盘,收盘,最高,最低,成交量
+  const sample = klines[0].split(',');
+  if (sample.length !== 6) return false;
+  if (isNaN(parseFloat(sample[1]))) return false; // 开盘价必须是数字
+  return true;
+}
+
 // ========== K 线数据抓取 ==========
 
 async function fetchKline(secid, klt, lmt, retries = 3) {
@@ -151,11 +178,16 @@ async function fetchKline(secid, klt, lmt, retries = 3) {
 
 // ========== 节假日判断 ==========
 
-function isTradingDay() {
+// 统一用 UTC 方法计算北京时间，避免浏览器时区差异
+function getBeijingNow() {
   const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const bj = new Date(utc + 8 * 3600000);
-  const day = bj.getDay();
+  const bjMs = now.getTime() + (8 * 60 - now.getTimezoneOffset()) * 60000;
+  return new Date(bjMs);
+}
+
+function isTradingDay() {
+  const bj = getBeijingNow();
+  const day = bj.getUTCDay();
   if (day === 0 || day === 6) return false;
   const dateStr = bj.toISOString().slice(0, 10);
   return !HOLIDAYS_2026.has(dateStr);
@@ -167,9 +199,7 @@ function saveHistory(dataDir, type, data) {
   const histDir = path.join(dataDir, 'history');
   if (!fs.existsSync(histDir)) fs.mkdirSync(histDir, { recursive: true });
 
-  const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const bj = new Date(utc + 8 * 3600000);
+  const bj = getBeijingNow();
   const dateStr = bj.toISOString().slice(0, 10);
   const histFile = path.join(histDir, `${type}-${dateStr}.json`);
 
@@ -207,24 +237,30 @@ async function main() {
   const dataDir = path.join(__dirname, 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
 
-  // 板块数据（只抓前端需要的字段 → 转换语义化命名）
+  // 板块数据（只抓前端需要的字段 → 转换语义化命名 → 校验）
   for (const [type, filterStr] of Object.entries(SECTOR_TYPES)) {
     console.log(`Fetching ${type}...`);
     const raw = await fetchAllPages(filterStr, SECTOR_FIELDS.join(','));
-    const data = raw.map(transformSector);
-    fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify(data, null, 2));
-    console.log(`✓ ${type}.json saved (${data.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
-    saveHistory(dataDir, type, data);
+    const all = raw.map(transformSector);
+    const valid = all.filter(validateSector);
+    const rejected = all.length - valid.length;
+    if (rejected > 0) console.log(`  ⚠️ 校验拦截 ${rejected} 条异常数据`);
+    fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify(valid, null, 2));
+    console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
+    saveHistory(dataDir, type, valid);
   }
 
-  // 资金流向数据（只取前 100 条，不需要分页全量抓）
+  // 资金流向数据（只取前 100 条 → 校验）
   for (const [type, filterStr] of Object.entries(CAPITAL_FLOW_TYPES)) {
     console.log(`Fetching ${type}...`);
     const { items: raw } = await fetchPage(filterStr, 'f62', '1', CAPITAL_FIELDS.join(','), 100, 1);
-    const data = raw.map(transformCapital);
-    fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify(data, null, 2));
-    console.log(`✓ ${type}.json saved (${data.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
-    saveHistory(dataDir, type, data);
+    const all = raw.map(transformCapital);
+    const valid = all.filter(validateCapital);
+    const rejected = all.length - valid.length;
+    if (rejected > 0) console.log(`  ⚠️ 校验拦截 ${rejected} 条异常数据`);
+    fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify(valid, null, 2));
+    console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
+    saveHistory(dataDir, type, valid);
   }
 
   // K 线数据（三大指数 × 三种周期 = 9 个文件）
@@ -237,6 +273,10 @@ async function main() {
     for (const { klt, lmt, suffix } of klineConfigs) {
       console.log(`Fetching ${idx.id}-${suffix}...`);
       const data = await fetchKline(idx.secid, klt, lmt);
+      if (!validateKline(data.klines)) {
+        console.log(`  ❌ K线数据校验失败，跳过保存`);
+        continue;
+      }
       fs.writeFileSync(path.join(dataDir, `${idx.id}-${suffix}.json`), JSON.stringify(data));
       console.log(`✓ ${idx.id}-${suffix}.json saved (${data.klines.length} items)`);
     }

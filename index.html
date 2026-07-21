@@ -627,10 +627,9 @@ function formatMarketCap(v) {
 // ========== 自动刷新 ==========
 function isTradingTime() {
   const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  const bj = new Date(utc + 8 * 3600000);
-  const t = bj.getHours() * 60 + bj.getMinutes();
-  return t >= 555 && t <= 905 && bj.getDay() >= 1 && bj.getDay() <= 5;
+  const bj = new Date(now.getTime() + (8 * 60 - now.getTimezoneOffset()) * 60000);
+  const t = bj.getUTCHours() * 60 + bj.getUTCMinutes();
+  return t >= 555 && t <= 905 && bj.getUTCDay() >= 1 && bj.getUTCDay() <= 5;
 }
 
 setInterval(() => {
