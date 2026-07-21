@@ -59,7 +59,7 @@ const COMMON_HEADERS = {
 // 请求间延迟，避免短时间大量请求触发反爬
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function fetchPage(filterStr, fid, sort, fields, pageSize, page, retries = 4) {
+async function fetchPage(filterStr, fid, sort, fields, pageSize, page, retries = 3) {
   const params = new URLSearchParams({
     fs: filterStr, fid, po: sort,
     pz: String(pageSize), pn: String(page),
@@ -87,30 +87,14 @@ async function fetchPage(filterStr, fid, sort, fields, pageSize, page, retries =
       return { items: json.data.diff, total: json.data.total };
     } catch (e) {
       if (attempt < retries) {
-        // 指数退避 + 随机抖动：5s / 12s / 21s / 32s
-        const wait = (4000 * attempt + Math.random() * 2000 * attempt);
-        console.log(`  ⚠️ 第 ${page} 页请求失败（${e.message}），${attempt}/${retries} 重试，等待 ${Math.round(wait/1000)}s...`);
+        const wait = 5000 * attempt;
+        console.log(`  ⚠️ 请求失败（${e.message}），${attempt}/${retries} 重试，等待 ${wait/1000}s...`);
         await sleep(wait);
       } else {
         throw e;
       }
     }
   }
-}
-
-async function fetchAllPages(filterStr, fields) {
-  const pageSize = 100;
-  let all = [], page = 1, total = Infinity;
-  while (all.length < total) {
-    const { items, total: t } = await fetchPage(filterStr, 'f3', '1', fields, pageSize, page);
-    total = t;
-    all = all.concat(items);
-    console.log(`  第 ${page} 页：${items.length} 条（总计 ${total}）`);
-    if (items.length < pageSize) break;
-    page++;
-    await sleep(3000 + Math.random() * 2000); // 翻页间隔 3~5s
-  }
-  return all;
 }
 
 // ========== 数据转换（原始字段码 → 语义化命名） ==========
@@ -265,11 +249,11 @@ async function main() {
   const dataDir = path.join(__dirname, 'public', 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
 
-  // 板块数据（只抓前端需要的字段 → 转换语义化命名 → 校验）
+  // 板块数据（每种只取 Top 100，1 页搞定，减少请求量避免被限流）
   for (const [type, filterStr] of Object.entries(SECTOR_TYPES)) {
     console.log(`Fetching ${type}...`);
     try {
-      const raw = await fetchAllPages(filterStr, SECTOR_FIELDS.join(','));
+      const { items: raw } = await fetchPage(filterStr, 'f3', '1', SECTOR_FIELDS.join(','), 100, 1);
       const all = raw.map(transformSector);
       const valid = all.filter(validateSector);
       const rejected = all.length - valid.length;
@@ -280,7 +264,7 @@ async function main() {
     } catch (e) {
       console.error(`❌ ${type} 抓取失败：${e.message}`);
     }
-    await sleep(5000 + Math.random() * 3000); // 5~8s 随机延迟（板块数据量大，给服务器喘息时间）
+    await sleep(3000); // 3s 间隔
   }
 
   // 资金流向数据（只取前 100 条 → 校验）
@@ -298,10 +282,12 @@ async function main() {
     } catch (e) {
       console.error(`❌ ${type} 抓取失败：${e.message}`);
     }
-    await sleep(5000 + Math.random() * 3000); // 5~8s
+    await sleep(3000);
   }
 
-  // K 线数据（三大指数 × 三种周期 = 9 个文件）
+  // K 线数据（三大指数 × 三种周期，今天已存在则跳过）
+  const bj = getBeijingNow();
+  const today = bj.toISOString().slice(0, 10);
   const klineConfigs = [
     { klt: 101, lmt: 120, suffix: 'daily' },
     { klt: 102, lmt: 52, suffix: 'weekly' },
@@ -309,19 +295,32 @@ async function main() {
   ];
   for (const idx of KLINE_INDICES) {
     for (const { klt, lmt, suffix } of klineConfigs) {
-      console.log(`Fetching ${idx.id}-${suffix}...`);
+      const fileName = `${idx.id}-${suffix}.json`;
+      const filePath = path.join(dataDir, fileName);
+
+      // 缓存判断：今天已抓过就跳过
+      if (fs.existsSync(filePath)) {
+        const mtime = new Date(fs.statSync(filePath).mtimeMs);
+        const mdate = new Date(mtime.getTime() + (8 * 60 - mtime.getTimezoneOffset()) * 60000).toISOString().slice(0, 10);
+        if (mdate === today) {
+          console.log(`⏭️ ${fileName} 今天已抓取，跳过`);
+          continue;
+        }
+      }
+
+      console.log(`Fetching ${fileName}...`);
       try {
         const data = await fetchKline(idx.secid, klt, lmt);
         if (!validateKline(data.klines)) {
           console.log(`  ❌ K线数据校验失败，跳过保存`);
         } else {
-          fs.writeFileSync(path.join(dataDir, `${idx.id}-${suffix}.json`), JSON.stringify(data));
-          console.log(`✓ ${idx.id}-${suffix}.json saved (${data.klines.length} items)`);
+          fs.writeFileSync(filePath, JSON.stringify(data));
+          console.log(`✓ ${fileName} saved (${data.klines.length} items)`);
         }
       } catch (e) {
-        console.error(`❌ ${idx.id}-${suffix} 抓取失败：${e.message}`);
+        console.error(`❌ ${fileName} 抓取失败：${e.message}`);
       }
-      await sleep(3000 + Math.random() * 2000); // 3~5s
+      await sleep(3000);
     }
   }
 
