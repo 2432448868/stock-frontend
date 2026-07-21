@@ -74,8 +74,7 @@ td{font-size:.9rem}
 </div>
 
 <script>
-// ⚠️ 部署 Worker 后，把下面改成你的 Worker 地址
-const API_BASE = 'https://stock-backend.stock-backend-wkl.workers.dev';
+const DATA_PATH = './data';
 
 let currentType = 'industry';
 const tableBody = document.getElementById('tableBody');
@@ -83,7 +82,7 @@ const lastUpdateEl = document.getElementById('lastUpdate');
 const marketStatusEl = document.getElementById('marketStatus');
 
 let autoRefreshTimer = null;
-const REFRESH_INTERVAL = 15; // 自动刷新间隔（秒）
+const REFRESH_INTERVAL = 30; // 数据每 15 分钟更新一次，前端 30 秒检查一次新数据
 
 // Tab 切换
 document.querySelectorAll('.tab').forEach(tab => {
@@ -99,12 +98,11 @@ document.querySelectorAll('.tab').forEach(tab => {
 async function loadData() {
   tableBody.innerHTML = '<tr><td colspan="7" class="loading">加载中...</td></tr>';
   try {
-    const res = await fetch(`${API_BASE}/?type=${currentType}`);
+    const res = await fetch(`${DATA_PATH}/${currentType}.json?t=${Date.now()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const result = await res.json();
-    if (!result.success) throw new Error(result.error || '数据加载失败');
-    renderTable(result.data.diff);
-    lastUpdateEl.textContent = `更新于 ${new Date(result.data.timestamp).toLocaleTimeString('zh-CN')}`;
+    const data = await res.json();
+    renderTable(data);
+    lastUpdateEl.textContent = `更新于 ${new Date().toLocaleTimeString('zh-CN')}`;
   } catch (error) {
     tableBody.innerHTML = `<tr><td colspan="7" class="error"><div>加载失败：${error.message}</div><button class="retry-btn" onclick="loadData()">重试</button></td></tr>`;
   }
@@ -116,16 +114,16 @@ function renderTable(data) {
     return;
   }
   tableBody.innerHTML = data.map(item => {
-    const cls = item.changePercent > 0 ? 'up' : item.changePercent < 0 ? 'down' : 'flat';
-    const sign = item.changePercent > 0 ? '+' : '';
+    const cls = item.f3 > 0 ? 'up' : item.f3 < 0 ? 'down' : 'flat';
+    const sign = item.f3 > 0 ? '+' : '';
     return `<tr>
-      <td><strong>${item.name}</strong><br><span style="font-size:.75rem;opacity:.5">${item.code}</span></td>
-      <td class="${cls}"><strong>${sign}${item.changePercent.toFixed(2)}%</strong></td>
-      <td class="${cls}">${sign}${item.change.toFixed(2)}</td>
-      <td class="up">${item.upCount || 0}</td>
-      <td class="down">${item.downCount || 0}</td>
-      <td>${item.turnoverRate ? item.turnoverRate.toFixed(2) : '-'}%</td>
-      <td>${item.leadingStock || '-'}</td>
+      <td><strong>${item.f14}</strong><br><span style="font-size:.75rem;opacity:.5">${item.f12}</span></td>
+      <td class="${cls}"><strong>${sign}${(item.f3 / 100).toFixed(2)}%</strong></td>
+      <td class="${cls}">${sign}${(item.f4 / 100).toFixed(2)}</td>
+      <td class="up">${item.f104 || 0}</td>
+      <td class="down">${item.f105 || 0}</td>
+      <td>${item.f8 ? (item.f8 / 100).toFixed(2) : '-'}%</td>
+      <td>${item.f128 || '-'}</td>
     </tr>`;
   }).join('');
 }
@@ -137,11 +135,10 @@ function isTradingTime() {
   const beijing = new Date(utc + 8 * 3600000);
   const h = beijing.getHours(), m = beijing.getMinutes();
   const t = h * 60 + m;
-  // 9:15 = 555, 15:05 = 905
   return t >= 555 && t <= 905 && beijing.getDay() >= 1 && beijing.getDay() <= 5;
 }
 
-// 自动刷新（交易时间每 15 秒，非交易时间停止）
+// 自动刷新（交易时间每 30 秒检查新数据，非交易时间停止）
 function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
   let countdown = REFRESH_INTERVAL;
@@ -154,7 +151,7 @@ function startAutoRefresh() {
         countdown = REFRESH_INTERVAL;
       }
       marketStatusEl.innerHTML = '<span class="market-open">● 交易中</span>';
-      marketStatusEl.title = `${countdown} 秒后自动刷新`;
+      marketStatusEl.title = `${countdown} 秒后刷新`;
     } else {
       marketStatusEl.innerHTML = '<span class="market-closed">● 已休市</span>';
       countdown = REFRESH_INTERVAL;
