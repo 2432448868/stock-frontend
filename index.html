@@ -188,7 +188,7 @@ let sortColumn = 'rank';
 let sortDir = 'asc';
 let searchQuery = '';
 let autoRefreshTimer = null;
-let countdown = 30;
+let countdown = 300;
 
 const tableBody  = document.getElementById('tableBody');
 const searchInput = document.getElementById('searchInput');
@@ -389,10 +389,10 @@ function isTradingTime() {
   return t >= 555 && t <= 905 && beijing.getDay() >= 1 && beijing.getDay() <= 5;
 }
 
-// ========== 自动刷新（30 秒间隔） ==========
+// ========== 自动刷新（5 分钟间隔） ==========
 function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-  countdown = 30;
+  countdown = 300;
   const marketStatusEl = document.querySelector('.subtitle');
 
   autoRefreshTimer = setInterval(() => {
@@ -402,17 +402,17 @@ function startAutoRefresh() {
         // 清除缓存，强制重新请求
         delete rawData[currentType];
         loadData();
-        countdown = 30;
+        countdown = 300;
       }
-      marketStatusEl.textContent = `东方财富 · 交易中 · ${countdown}s 后刷新`;
+      const mins = Math.floor(countdown / 60);
+      const secs = countdown % 60;
+      marketStatusEl.textContent = `东方财富 · 交易中 · ${mins}:${String(secs).padStart(2, '0')} 后刷新`;
     } else {
       marketStatusEl.textContent = '东方财富 · 已休市';
-      countdown = 30;
+      countdown = 300;
     }
   }, 1000);
 }
-
-// ========== 初始化 ==========
 loadData();
 startAutoRefresh();
 </script>
