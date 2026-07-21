@@ -1,6 +1,6 @@
 import './styles/main.css';
 import { state } from './state.js';
-import { isTradingTime } from './utils.js';
+import { isTradingTime, getBeijingNow } from './utils.js';
 import { initMarket, onMarketTabOpen, rebuildChart, refreshMarket } from './market.js';
 import { initCapital, loadCapitalFlow } from './capital.js';
 import { initSector, loadSectorData } from './sector.js';
@@ -39,6 +39,9 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
 // ========== 自动刷新 ==========
 setInterval(() => {
   const el = document.getElementById('statusText');
+  const bj = getBeijingNow();
+  const h = bj.getUTCHours(), m = bj.getUTCMinutes(), s = bj.getUTCSeconds();
+  const timeStr = `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   if (isTradingTime()) {
     state.countdown--;
     if (state.countdown <= 0) {
@@ -50,10 +53,10 @@ setInterval(() => {
       state.countdown = 1800;
       document.querySelectorAll('#staleNotice, [style*="rgba(255,165,0"]').forEach(n => n.remove());
     }
-    const m = Math.floor(state.countdown / 60), s = state.countdown % 60;
-    el.textContent = `东方财富 · 交易中 · ${m}:${String(s).padStart(2, '0')} 后刷新`;
+    const cm = Math.floor(state.countdown / 60), cs = state.countdown % 60;
+    el.textContent = `东方财富 · 交易中 · ${timeStr} · ${cm}:${String(cs).padStart(2, '0')} 后刷新`;
   } else {
-    el.textContent = '东方财富 · 已休市';
+    el.textContent = `东方财富 · 已休市 · ${timeStr}`;
     state.countdown = 1800;
   }
 }, 1000);
