@@ -200,7 +200,7 @@ let klineCache = {};
 let sectorData = {};
 let currentSectorType = 'industry';
 let sortColumn = 'rank', sortDir = 'asc', searchQuery = '';
-let countdown = 900;
+let countdown = 1800;
 
 // ========== 本地缓存（错误降级用） ==========
 function saveCache(key, data) {
@@ -642,7 +642,7 @@ setInterval(() => {
       loadInsight();
       loadSectorData();
       loadCapitalFlow();
-      countdown = 900;
+      countdown = 1800;
       // 移除过期提示
       document.querySelectorAll('#staleNotice, [style*="rgba(255,165,0"]').forEach(n => n.remove());
     }
@@ -650,7 +650,7 @@ setInterval(() => {
     el.textContent = `东方财富 · 交易中 · ${m}:${String(s).padStart(2, '0')} 后刷新`;
   } else {
     el.textContent = '东方财富 · 已休市';
-    countdown = 900;
+    countdown = 1800;
   }
 }, 1000);
 
