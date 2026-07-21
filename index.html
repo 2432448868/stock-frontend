@@ -163,7 +163,7 @@ tbody tr:last-child td{border-bottom:none}
         <th data-sort="f4">涨跌额 <span class="sort-icon"></span></th>
         <th data-sort="f104">上涨 <span class="sort-icon"></span></th>
         <th data-sort="f105">下跌 <span class="sort-icon"></span></th>
-        <th data-sort="f8" class="hide-mobile">换手率 <span class="sort-icon"></span></th>
+        <th data-sort="f20" class="hide-mobile">总市值 <span class="sort-icon"></span></th>
         <th class="hide-mobile">领涨股</th>
       </tr>
     </thead>
@@ -278,7 +278,7 @@ function render() {
       case 'name':  va = a.f14 || ''; vb = b.f14 || ''; break;
       case 'f3':    va = a.f3 ?? 0; vb = b.f3 ?? 0; break;
       case 'f4':    va = a.f4 ?? 0; vb = b.f4 ?? 0; break;
-      case 'f8':    va = a.f8 ?? 0; vb = b.f8 ?? 0; break;
+      case 'f20':   va = a.f20 ?? 0; vb = b.f20 ?? 0; break;
       case 'f104':  va = a.f104 ?? 0; vb = b.f104 ?? 0; break;
       case 'f105':  va = a.f105 ?? 0; vb = b.f105 ?? 0; break;
       default:      va = 0; vb = 0;
@@ -305,7 +305,7 @@ function renderTable(data) {
   tableBody.innerHTML = data.map((item, idx) => {
     const changePct = item.f3 / 100;
     const changeAmt = item.f4 / 100;
-    const turnover  = item.f8 ? (item.f8 / 100).toFixed(2) : '-';
+    const marketCap = item.f20 ? formatMarketCap(item.f20) : '-';
     const cls = changePct > 0 ? 'up' : changePct < 0 ? 'down' : 'flat';
     const bgCls = changePct > 0 ? 'up-bg' : changePct < 0 ? 'down-bg' : '';
     const sign = changePct > 0 ? '+' : '';
@@ -324,7 +324,7 @@ function renderTable(data) {
       <td class="${cls}">${sign}${changeAmt.toFixed(2)}</td>
       <td class="up">${item.f104 ?? 0}</td>
       <td class="down">${item.f105 ?? 0}</td>
-      <td class="hide-mobile">${turnover}%</td>
+      <td class="hide-mobile">${marketCap}</td>
       <td class="hide-mobile">
         <div class="leading-badge">${item.f128 || '-'}</div>
         ${item.f136 ? `<div class="leading-change ${lcCls}">${lcSign}${leadingChange.toFixed(2)}%</div>` : ''}
@@ -378,6 +378,14 @@ function updateSortIndicators() {
       icon.textContent = '';
     }
   });
+}
+
+// ========== 市值格式化 ==========
+function formatMarketCap(value) {
+  if (value >= 1e12) return (value / 1e12).toFixed(2) + '万亿';
+  if (value >= 1e8)  return (value / 1e8).toFixed(1) + '亿';
+  if (value >= 1e4)  return (value / 1e4).toFixed(0) + '万';
+  return String(value);
 }
 
 // ========== 交易时间判断（北京时间 9:15 - 15:05） ==========
