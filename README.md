@@ -496,27 +496,51 @@ else if (window.matchMedia('(prefers-color-scheme: light)').matches) setTheme('l
 
 ```
 stock-frontend/
-├── index.html                          # 主页面（~640 行，包含全部前端代码）
-├── fetch-data.js                       # 数据抓取脚本（Node.js）
-├── data/
-│   ├── industry.json                   # 行业板块数据（~191KB, 496 条）
-│   ├── concept.json                    # 概念板块数据（~192KB, 495 条）
-│   ├── region.json                     # 地域板块数据（~12KB, 31 条）
-│   ├── capital-industry.json           # 行业资金流向（~27KB, 100 条）
-│   └── capital-concept.json            # 概念资金流向（~28KB, 100 条）
+├── index.html                          # HTML 骨架（~55 行，纯结构）
+├── package.json                        # Vite 构建配置
+├── vite.config.js                      # Vite 配置文件
+├── fetch-data.js                       # 数据抓取脚本（Node.js，GitHub Actions 运行）
+├── src/
+│   ├── main.js                         # 入口：主题切换 / 导航 / 自动刷新
+│   ├── state.js                        # 全局共享状态
+│   ├── utils.js                        # 工具函数（格式化 / 缓存 / 时区）
+│   ├── styles/
+│   │   └── main.css                    # 全部样式（含明暗主题变量）
+│   ├── market.js                       # 📈 大盘走势（ECharts K 线图）
+│   ├── capital.js                      # 💰 资金流向
+│   ├── sector.js                       # 📊 板块分析（搜索 / 排序）
+│   └── insight.js                      # 🧠 市场洞察（规则引擎）
+├── public/
+│   ├── favicon.svg                     # 蓝色折线图图标
+│   └── data/
+│       ├── industry.json               # 行业板块（496 条）
+│       ├── concept.json                # 概念板块（495 条）
+│       ├── region.json                 # 地域板块（31 条）
+│       ├── capital-industry.json       # 行业资金流向（100 条）
+│       ├── capital-concept.json        # 概念资金流向（100 条）
+│       ├── kline-*.json                # K 线数据（3 指数 × 3 周期）
+│       └── history/                    # 历史数据存档（30 天）
 ├── .github/workflows/
-│   ├── static.yml                      # GitHub Pages 自动部署
-│   └── update-stock-data.yml           # 定时数据抓取（每 15 分钟）
+│   ├── static.yml                      # GitHub Pages 部署（npm build → dist/）
+│   └── update-stock-data.yml           # 定时数据抓取（15~45 分钟随机）
+├── .gitignore
 ├── PROJECT-SUMMARY.md                  # 项目技术总结文档
 └── README.md                           # 本文件
 
 stock-backend/                          # Cloudflare Worker（备用，当前未启用）
-├── src/
-│   └── index.ts                        # Worker 主逻辑（TypeScript）
+├── src/index.ts                        # Worker 主逻辑（TypeScript）
 ├── wrangler.toml                       # Worker 配置 + KV 绑定
-├── package.json                        # 依赖配置
-└── node_modules/                       # 开发依赖
+└── package.json
 ```
+
+### 构建产物（dist/）
+
+| 文件 | 大小 | 说明 |
+|------|------|------|
+| index.html | 3.82 KB | HTML 骨架 + 引入 JS/CSS |
+| JS（压缩） | 23 KB | 源码 57KB → 构建 23KB（-60%） |
+| CSS（压缩） | 6.92 KB | 全部样式 |
+| data/*.json | ~265 KB | 静态数据文件（原样复制） |
 
 ---
 
@@ -527,7 +551,16 @@ stock-backend/                          # Cloudflare Worker（备用，当前未
 1. Fork 或克隆本仓库
 2. 进入仓库 **Settings → Pages**
 3. Source 选择 **GitHub Actions**
-4. 推送代码到 `main` 分支，自动部署
+4. 推送代码到 `main` 分支，自动执行 `npm ci → npm run build → 部署 dist/`
+
+### 本地开发
+
+```bash
+npm install       # 安装依赖
+npm run dev       # 启动开发服务器（HMR 热更新）
+npm run build     # 构建生产版本到 dist/
+npm run preview   # 预览构建产物
+```
 
 ### 数据抓取配置
 
@@ -639,7 +672,7 @@ await Promise.race([fetch(url), timeoutPromise]);
 | 错误降级 | ✅ 已完成 | 网络失败时显示 localStorage 缓存数据 + 黄色过期提示条 |
 | 抓取频率随机化 | ✅ 已完成 | 50% 概率随机跳过，实际间隔 15~45 分钟，避免固定频率被反爬 |
 | 自动重试机制 | ✅ 已完成 | 网络抖动自动重试 3 次（指数退避 2s/4s/6s） |
-| 单文件拆分/Vite | ⏳ 暂缓 | 需重构整个项目结构，改动太大，当前单文件可维护 |
+| 单文件拆分/Vite | ✅ 已完成 | 拆分为 10 个模块，JS 压缩 57KB→23KB（-60%），GitHub Actions 自动构建 |
 | 部署速度 | ❌ 不做 | GitHub Pages 部署速度可接受 |
 
 ### 数据质量优化
@@ -685,7 +718,6 @@ await Promise.race([fetch(url), timeoutPromise]);
 | **全局搜索** | 顶栏搜索框搜索所有板块 + 个股，跳转详情 | ⭐⭐ |
 | **数据对比** | 选择多个板块对比涨跌幅走势 | ⭐⭐⭐ |
 | **日历模式** | 日历视图展示每天的板块涨跌情况 | ⭐⭐ |
-| **前端框架化** | 迁移到 Vue 3 / React，组件化开发 | ⭐⭐⭐ |
 
 ---
 
@@ -693,12 +725,12 @@ await Promise.race([fetch(url), timeoutPromise]);
 
 | 层级 | 技术 | 用途 | 成本 |
 |------|------|------|------|
-| **前端** | 原生 HTML / CSS / JS | 单页应用，零框架依赖 | 免费 |
-| **图表** | ECharts 5（CDN） | K 线图、分时图可视化 | 免费 |
-| **静态部署** | GitHub Pages | 网站托管 | 免费 |
-| **定时任务** | GitHub Actions | 数据定时抓取 | 免费（2000 分钟/月） |
+| **前端** | Vite + 原生 JS（ES Modules） | 模块化开发，按需构建 | 免费 |
+| **构建** | Vite 5 | 开发热更新 + 生产构建（JS -60%） | 免费 |
+| **图表** | ECharts 5（CDN 懒加载） | K 线图、分时图可视化 | 免费 |
+| **静态部署** | GitHub Pages | 网站托管（npm build → dist/） | 免费 |
+| **定时任务** | GitHub Actions | 数据定时抓取（15~45 分钟随机） | 免费（2000 分钟/月） |
 | **数据源** | 东方财富 API | A 股板块 / 资金流 / K 线数据 | 免费 |
-| **实时数据** | JSONP | 前端直连东方财富 K 线 API | 免费 |
 | **后端（备用）** | Cloudflare Workers + KV | 实时 API 代理（因 502 未启用） | 免费（10 万次/天） |
 | **版本控制** | Git + GitHub | 代码管理 + 数据版本化 | 免费 |
 
