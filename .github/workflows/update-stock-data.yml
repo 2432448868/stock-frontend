@@ -2,8 +2,8 @@ name: Update Stock Data
 
 on:
   schedule:
-    # 每 15 分钟触发一次，脚本内部 50% 概率随机跳过（实际间隔 15~45 分钟）
-    - cron: '*/15 1-7 * * 1-5'
+    # 临时改成每分钟触发，迫使 GitHub 重新注册 schedule trigger，之后改回来
+    - cron: '*/15 * * * *'
   workflow_dispatch:  # 支持手动触发
 
 jobs:
