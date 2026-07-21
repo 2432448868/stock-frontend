@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const EASTMONEY_API = 'https://push2.eastmoney.com/api/qt/clist/get';
+const KLINE_API = 'https://push2his.eastmoney.com/api/qt/stock/kline/get';
 
 const SECTOR_TYPES = {
   industry: 'm:90 t:2',
@@ -15,6 +16,13 @@ const CAPITAL_FLOW_TYPES = {
   'capital-industry': 'm:90 t:2',
   'capital-concept': 'm:90 t:3',
 };
+
+// 三大指数 K 线配置
+const KLINE_INDICES = [
+  { id: 'kline-000001', secid: '1.000001' },
+  { id: 'kline-399001', secid: '0.399001' },
+  { id: 'kline-399006', secid: '0.399006' },
+];
 
 // 2026 年 A 股休市日（法定节假日 + 周末已自动跳过）
 const HOLIDAYS_2026 = new Set([
@@ -112,6 +120,35 @@ function transformCapital(raw) {
   };
 }
 
+// ========== K 线数据抓取 ==========
+
+async function fetchKline(secid, klt, lmt, retries = 3) {
+  const params = new URLSearchParams({
+    secid, fields1: 'f1,f2,f3', fields2: 'f51,f52,f53,f54,f55,f56',
+    klt: String(klt), fqt: '1', end: '20500101', lmt: String(lmt),
+  });
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(`${KLINE_API}?${params}`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'https://quote.eastmoney.com/',
+        },
+      });
+      const json = await res.json();
+      if (!json.data?.klines) throw new Error('K线数据异常');
+      return { name: json.data.name, klines: json.data.klines };
+    } catch (e) {
+      if (attempt < retries) {
+        console.log(`  ⚠️ K线请求失败（${e.message}），${attempt}/${retries} 重试...`);
+        await new Promise(r => setTimeout(r, 2000 * attempt));
+      } else {
+        throw e;
+      }
+    }
+  }
+}
+
 // ========== 节假日判断 ==========
 
 function isTradingDay() {
@@ -182,6 +219,21 @@ async function main() {
     fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify(data, null, 2));
     console.log(`✓ ${type}.json saved (${data.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
     saveHistory(dataDir, type, data);
+  }
+
+  // K 线数据（三大指数 × 三种周期 = 9 个文件）
+  const klineConfigs = [
+    { klt: 101, lmt: 120, suffix: 'daily' },
+    { klt: 102, lmt: 52, suffix: 'weekly' },
+    { klt: 1, lmt: 240, suffix: 'minute' },
+  ];
+  for (const idx of KLINE_INDICES) {
+    for (const { klt, lmt, suffix } of klineConfigs) {
+      console.log(`Fetching ${idx.id}-${suffix}...`);
+      const data = await fetchKline(idx.secid, klt, lmt);
+      fs.writeFileSync(path.join(dataDir, `${idx.id}-${suffix}.json`), JSON.stringify(data));
+      console.log(`✓ ${idx.id}-${suffix}.json saved (${data.klines.length} items)`);
+    }
   }
 
   console.log('\nDone!');
