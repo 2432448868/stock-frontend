@@ -198,6 +198,12 @@ async function main() {
     return;
   }
 
+  // 随机跳过（50% 概率），让抓取间隔在 15~45 分钟之间随机分布
+  if (Math.random() < 0.5) {
+    console.log('🎲 本轮随机跳过（下次再抓），避免固定频率被识别。');
+    return;
+  }
+
   const dataDir = path.join(__dirname, 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
 
