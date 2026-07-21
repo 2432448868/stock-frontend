@@ -170,7 +170,7 @@ let klineCache = {};
 let sectorData = {};
 let currentSectorType = 'industry';
 let sortColumn = 'rank', sortDir = 'asc', searchQuery = '';
-let countdown = 300;
+let countdown = 900;
 
 // ========== 主题切换 ==========
 const themeBtn = document.getElementById('themeToggle');
@@ -621,7 +621,7 @@ setInterval(() => {
       sectorData = {}; klineCache = {};
       loadSectorData();
       loadCapitalFlow();
-      countdown = 300;
+      countdown = 900;
     }
     const m = Math.floor(countdown / 60), s = countdown % 60;
     el.textContent = `东方财富 · 交易中 · ${m}:${String(s).padStart(2, '0')} 后刷新`;
