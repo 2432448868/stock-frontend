@@ -234,7 +234,7 @@ async function main() {
     return;
   }
 
-  const dataDir = path.join(__dirname, 'data');
+  const dataDir = path.join(__dirname, 'public', 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
 
   // 板块数据（只抓前端需要的字段 → 转换语义化命名 → 校验）
