@@ -6,8 +6,8 @@
 <title>wkl's Analysis of A-share data</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
-:root{--bg0:#0d1117;--bg1:#161b22;--bg2:#21262d;--border:#30363d;--t1:#e6edf3;--t2:#8b949e;--accent:#8338ec;--accent2:#9b59f5;--up:#ff4d4f;--up-bg:rgba(255,77,79,.08);--down:#00b96b;--down-bg:rgba(0,185,107,.08);--shadow:rgba(0,0,0,.3)}
-[data-theme="light"]{--bg0:#f0f2f5;--bg1:#ffffff;--bg2:#f6f8fa;--border:#d0d7de;--t1:#1f2328;--t2:#656d76;--accent:#7c3aed;--accent2:#8b5cf6;--up:#cf1322;--up-bg:rgba(207,19,34,.06);--down:#389e0d;--down-bg:rgba(56,158,13,.06);--shadow:rgba(0,0,0,.08)}
+:root{--bg0:#0d1117;--bg1:#161b22;--bg2:#21262d;--border:#30363d;--t1:#e6edf3;--t2:#8b949e;--accent:#2563eb;--accent2:#3b82f6;--up:#ff4d4f;--up-bg:rgba(255,77,79,.08);--down:#00b96b;--down-bg:rgba(0,185,107,.08);--shadow:rgba(0,0,0,.3)}
+[data-theme="light"]{--bg0:#f0f2f5;--bg1:#ffffff;--bg2:#f6f8fa;--border:#d0d7de;--t1:#1f2328;--t2:#656d76;--accent:#2563eb;--accent2:#3b82f6;--up:#cf1322;--up-bg:rgba(207,19,34,.06);--down:#389e0d;--down-bg:rgba(56,158,13,.06);--shadow:rgba(0,0,0,.08)}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg0);color:var(--t1);min-height:100vh;padding:20px 16px;transition:background .3s,color .3s}
 .container{max-width:1200px;margin:0 auto}
@@ -18,7 +18,7 @@ body{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-s
 
 /* Header */
 .header{text-align:center;margin-bottom:20px}
-.header h1{font-size:1.6rem;font-weight:800;margin-bottom:4px;background:linear-gradient(135deg,var(--accent),#c084fc,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.header h1{font-size:1.6rem;font-weight:800;margin-bottom:4px;background:linear-gradient(135deg,var(--accent),#60a5fa,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .header .sub{font-size:.8rem;color:var(--t2)}
 
 /* Nav Tabs */
@@ -269,7 +269,10 @@ function initChart() {
 
 async function loadChartData(idx, klt) {
   if (!chart) return;
-  chart.showLoading({ text: '加载中...', color: '#8338ec', textColor: '#e6edf3', maskColor: 'rgba(13,17,23,.8)' });
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const txtColor = isLight ? '#1f2328' : '#e6edf3';
+  const maskColor = isLight ? 'rgba(240,242,245,.8)' : 'rgba(13,17,23,.8)';
+  chart.showLoading({ text: '加载中...', color: '#2563eb', textColor: txtColor, maskColor });
   try {
     const result = await loadKline(INDICES[idx].secid, klt);
     const klines = result.data.klines.map(k => k.split(','));
@@ -300,9 +303,9 @@ async function loadChartData(idx, klt) {
         series: [
           {
             name: '价格', type: 'line', data: closes, xAxisIndex: 0, yAxisIndex: 0,
-            smooth: true, symbol: 'none', lineStyle: { color: '#8338ec', width: 2 },
+            smooth: true, symbol: 'none', lineStyle: { color: '#2563eb', width: 2 },
             areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(131,56,236,.3)' }, { offset: 1, color: 'rgba(131,56,236,.02)' },
+              { offset: 0, color: 'rgba(37,99,235,.3)' }, { offset: 1, color: 'rgba(37,99,235,.02)' },
             ]) },
           },
           {
@@ -331,7 +334,7 @@ async function loadChartData(idx, klt) {
         ],
         dataZoom: [
           { type: 'inside', xAxisIndex: [0, 1], start: klt === '102' ? 0 : 60, end: 100 },
-          { type: 'slider', xAxisIndex: [0, 1], bottom: 5, height: 16, borderColor: '#30363d', fillerColor: 'rgba(131,56,236,.15)', handleStyle: { color: '#8338ec' }, textStyle: { color: '#8b949e' } },
+          { type: 'slider', xAxisIndex: [0, 1], bottom: 5, height: 16, borderColor: '#30363d', fillerColor: 'rgba(37,99,235,.15)', handleStyle: { color: '#2563eb' }, textStyle: { color: '#8b949e' } },
         ],
         series: [
           {
