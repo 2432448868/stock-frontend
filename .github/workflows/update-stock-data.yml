@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '23'
 
       - name: Fetch stock data
         run: node fetch-data.js
@@ -26,7 +26,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/
+          git add public/data/
           if ! git diff --staged --quiet; then
             git commit -m "chore: update stock data $(date '+%Y-%m-%d %H:%M:%S')"
             git push
