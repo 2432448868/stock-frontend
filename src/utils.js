@@ -66,7 +66,7 @@ export function getBeijingNow() {
 export function isTradingTime() {
   const bj = getBeijingNow();
   const t = bj.hours * 60 + bj.minutes;
-  // 上午 9:15 ~ 11:30，下午 13:00 ~ 15:00，周一到周五
-  const isWeekday = bj.day >= 1 && bj.day <= 5;
+  // 上午 9:15 ~ 11:30，下午 13:00 ~ 15:00，周一(1)到周五(5)
+  const isWeekday = bj.dayOfWeek >= 1 && bj.dayOfWeek <= 5;
   return isWeekday && ((t >= 555 && t <= 690) || (t >= 780 && t <= 900));
 }
