@@ -227,27 +227,22 @@ function getBeijingNow() {
     timeZone: 'Asia/Shanghai',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
-    weekday: 'short',
     hour12: false,
   }).formatToParts(now);
   const get = (type) => parts.find(p => p.type === type)?.value;
-  const weekdayStr = get('weekday'); // '周二'
-  // 周=0(日),1(一),2(二),3(三),4(四),5(五),6(六)
-  const weekDayMap = { '日': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6 };
-  const dayOfWeek = weekDayMap[weekdayStr?.[1]] ?? -1;
   return {
     hours: parseInt(get('hour')),
     minutes: parseInt(get('minute')),
     seconds: parseInt(get('second')),
-    day: parseInt(get('day')),
-    dayOfWeek,
     dateStr: `${get('year')}-${get('month')}-${get('day')}`,
   };
 }
 
 function isTradingDay() {
   const bj = getBeijingNow();
-  if (bj.dayOfWeek === 0 || bj.dayOfWeek === 6) return false;
+  // 用 dateStr 构造 Date 获取星期几（0=周日, 6=周六）
+  const dayOfWeek = new Date(bj.dateStr).getDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6) return false;
   return !HOLIDAYS_2026.has(bj.dateStr);
 }
 

@@ -63,10 +63,13 @@ export function getBeijingNow() {
 }
 
 // 交易时间判断
+// 用 dateStr（已验证时间正确）构造 Date 来判断星期几，避免 Intl weekday 解析问题
 export function isTradingTime() {
   const bj = getBeijingNow();
   const t = bj.hours * 60 + bj.minutes;
-  // 上午 9:15 ~ 11:30，下午 13:00 ~ 15:00，周一(1)到周五(5)
-  const isWeekday = bj.dayOfWeek >= 1 && bj.dayOfWeek <= 5;
+  // 用 dateStr 构造 Date 获取星期几（0=周日, 6=周六）
+  const dayOfWeek = new Date(bj.dateStr).getDay();
+  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+  // 上午 9:15 ~ 11:30，下午 13:00 ~ 15:00
   return isWeekday && ((t >= 555 && t <= 690) || (t >= 780 && t <= 900));
 }
