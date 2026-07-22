@@ -36,8 +36,9 @@ async function loadSectorData() {
     const res = await fetch(`${DATA_PATH}/${state.currentSectorType}.json?t=${Date.now()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    state.sectorData[state.currentSectorType] = data;
-    saveCache('sector-' + state.currentSectorType, data);
+    state.sectorData[state.currentSectorType] = data.data || data;
+    state.sectorTime = data.updatedAt || '';
+    saveCache('sector-' + state.currentSectorType, { data: state.sectorData[state.currentSectorType], ts: Date.now(), updatedAt: state.sectorTime });
     renderSector();
   } catch (e) {
     const cached = loadCache('sector-' + state.currentSectorType);
@@ -114,6 +115,7 @@ function renderSectorOverview(data) {
     <div class="ov-item"><span class="label">平均涨幅</span><span class="val ${avgCls}">${avg >= 0 ? '+' : ''}${avg.toFixed(2)}%</span></div>
     <div class="ov-item hide-mobile"><span class="label">最强</span><span class="val up">${s[0]?.name || '-'}</span></div>
     <div class="ov-item hide-mobile"><span class="label">最弱</span><span class="val down">${s[s.length - 1]?.name || '-'}</span></div>
+    ${state.sectorTime ? `<div class="ov-item" style="grid-column:1/-1"><span class="label" style="font-size:.7rem;opacity:.5">数据获取时间</span><span class="val" style="font-size:.75rem;opacity:.6">${state.sectorTime}</span></div>` : ''}
   `;
 }
 

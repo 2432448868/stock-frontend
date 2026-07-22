@@ -19,9 +19,11 @@ async function loadCapitalFlow() {
     const res = await fetch(`${DATA_PATH}/capital-${state.currentCapitalType}.json?t=${Date.now()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    saveCache('capital-' + state.currentCapitalType, data);
-    renderCapitalOverview(data);
-    renderCapitalTable(data);
+    const list = data.data || data;
+    state.capitalTime = data.updatedAt || '';
+    saveCache('capital-' + state.currentCapitalType, { data: list, ts: Date.now(), updatedAt: state.capitalTime });
+    renderCapitalOverview(list);
+    renderCapitalTable(list);
   } catch (e) {
     const cached = loadCache('capital-' + state.currentCapitalType);
     if (cached) {
@@ -51,6 +53,7 @@ function renderCapitalOverview(data) {
     <div class="ov-item"><span class="label">流出总额</span><span class="val down">${formatAmount(totalOut)}</span></div>
     <div class="ov-item"><span class="label">上涨板块</span><span class="val up">${upCount}</span></div>
     <div class="ov-item"><span class="label">下跌板块</span><span class="val down">${downCount}</span></div>
+    ${state.capitalTime ? `<div class="ov-item" style="grid-column:1/-1"><span class="label" style="font-size:.7rem;opacity:.5">数据获取时间</span><span class="val" style="font-size:.75rem;opacity:.6">${state.capitalTime}</span></div>` : ''}
   `;
 }
 

@@ -6,14 +6,17 @@ export const state = {
   selectedIdx: 0,
   currentKlt: '101',
   klineCache: {},
+  klineTime: '',
   // 板块分析
   sectorData: {},
+  sectorTime: '',
   currentSectorType: 'industry',
   sortColumn: 'rank',
   sortDir: 'asc',
   searchQuery: '',
   // 资金流向
   currentCapitalType: 'industry',
+  capitalTime: '',
   // 自动刷新
   countdown: 1800,
 };

@@ -10,7 +10,9 @@ async function loadKline(secid, klt) {
   const res = await fetch(`${DATA_PATH}/kline-${idxCode}-${suffix}.json?t=${Date.now()}`);
   if (!res.ok) throw new Error(`K线数据加载失败: HTTP ${res.status}`);
   const data = await res.json();
-  state.klineCache[key] = { data: { name: data.name, klines: data.klines } };
+  const klineData = { name: data.name, klines: data.klines };
+  state.klineTime = data.updatedAt || state.klineTime;
+  state.klineCache[key] = { data: klineData };
   return state.klineCache[key];
 }
 
@@ -105,6 +107,9 @@ async function loadChartData(idx, klt) {
       }, true);
     }
     state.chart.hideLoading();
+    // 更新 K 线时间戳
+    const timeEl = document.getElementById('klineTime');
+    if (timeEl && state.klineTime) timeEl.textContent = `数据获取：${state.klineTime}`;
   } catch (e) {
     state.chart.hideLoading();
     console.error('K线加载失败:', e);

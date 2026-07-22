@@ -8,7 +8,7 @@ async function loadInsight() {
     ]);
     const sectors = await sectorRes.json();
     const capital = await capitalRes.json();
-    renderInsight(sectors, capital);
+    renderInsight(sectors.data || sectors, capital.data || capital, sectors.updatedAt);
   } catch (e) {
     document.getElementById('insightContent').innerHTML =
       `<div class="error">洞察数据加载失败：${e.message}<br><button class="retry-btn" id="retryInsight">重试</button></div>`;
@@ -16,7 +16,7 @@ async function loadInsight() {
   }
 }
 
-function renderInsight(sectors, capital) {
+function renderInsight(sectors, capital, updatedAt) {
   const el = document.getElementById('insightContent');
 
   // 市场温度
@@ -72,7 +72,7 @@ function renderInsight(sectors, capital) {
   el.innerHTML = `
     <div style="text-align:center;margin-bottom:16px">
       <div style="font-size:.85rem;color:var(--t2)">📋 今日市场体检报告</div>
-      <div style="font-size:.72rem;color:var(--t2);margin-top:4px;opacity:.6">基于 ${total} 个行业板块 + ${capital.length} 个资金流数据 · ${new Date().toLocaleString('zh-CN')}</div>
+      <div style="font-size:.72rem;color:var(--t2);margin-top:4px;opacity:.6">基于 ${total} 个行业板块 + ${capital.length} 个资金流数据${updatedAt ? ' · 数据获取 ' + updatedAt : ''}</div>
     </div>
     <div class="insight-grid">
       <div class="insight-card">

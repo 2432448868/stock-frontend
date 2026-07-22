@@ -33,7 +33,8 @@ body{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-s
 
 /* Chart */
 .chart-box{background:var(--bg1);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px}
-.chart-bar{display:flex;gap:6px;padding:12px 16px;border-bottom:1px solid var(--border)}
+.chart-bar{display:flex;gap:6px;padding:12px 16px;border-bottom:1px solid var(--border);align-items:center;flex-wrap:wrap}
+.data-time{margin-left:auto;font-size:.7rem;color:var(--t2);opacity:.5}
 .chart-btn{padding:6px 16px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--t2);cursor:pointer;font-size:.78rem;transition:all .2s}
 .chart-btn:hover{color:var(--t1)}.chart-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
 #klineChart{width:100%;height:420px}

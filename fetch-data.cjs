@@ -293,7 +293,11 @@ async function main() {
   const dataDir = path.join(__dirname, 'public', 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
 
-  // 板块数据（每种只取 Top 100，1 页搞定，减少请求量避免被限流）
+  // 统一时间戳（所有文件共享同一抓取时间）
+  const bj = getBeijingNow();
+  const updatedAt = `${bj.dateStr} ${String(bj.hours).padStart(2, '0')}:${String(bj.minutes).padStart(2, '0')}:${String(bj.seconds).padStart(2, '0')}`;
+
+  // 板块数据（东方财富）
   for (const [type, filterStr] of Object.entries(SECTOR_TYPES)) {
     console.log(`Fetching ${type}...`);
     try {
@@ -302,25 +306,7 @@ async function main() {
       const valid = all.filter(validateSector);
       const rejected = all.length - valid.length;
       if (rejected > 0) console.log(`  ⚠️ 校验拦截 ${rejected} 条异常数据`);
-      fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify(valid, null, 2));
-      console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
-      saveHistory(dataDir, type, valid);
-    } catch (e) {
-      console.error(`❌ ${type} 抓取失败：${e.message}`);
-    }
-    await sleep(3000 + Math.floor(Math.random() * 2000)); // 3~5s 随机间隔
-  }
-
-  // 资金流向数据
-  for (const [type, filterStr] of Object.entries(CAPITAL_FLOW_TYPES)) {
-    console.log(`Fetching ${type}...`);
-    try {
-      const { items: raw } = await fetchPage(filterStr, 'f62', '1', CAPITAL_FIELDS.join(','), 100, 1);
-      const all = raw.map(transformCapital);
-      const valid = all.filter(validateCapital);
-      const rejected = all.length - valid.length;
-      if (rejected > 0) console.log(`  ⚠️ 校验拦截 ${rejected} 条异常数据`);
-      fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify(valid, null, 2));
+      fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify({ updatedAt, source: '东方财富', data: valid }, null, 2));
       console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
       saveHistory(dataDir, type, valid);
     } catch (e) {
@@ -329,8 +315,25 @@ async function main() {
     await sleep(3000 + Math.floor(Math.random() * 2000));
   }
 
-  // K 线数据
-  const bj = getBeijingNow();
+  // 资金流向数据（东方财富）
+  for (const [type, filterStr] of Object.entries(CAPITAL_FLOW_TYPES)) {
+    console.log(`Fetching ${type}...`);
+    try {
+      const { items: raw } = await fetchPage(filterStr, 'f62', '1', CAPITAL_FIELDS.join(','), 100, 1);
+      const all = raw.map(transformCapital);
+      const valid = all.filter(validateCapital);
+      const rejected = all.length - valid.length;
+      if (rejected > 0) console.log(`  ⚠️ 校验拦截 ${rejected} 条异常数据`);
+      fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify({ updatedAt, source: '东方财富', data: valid }, null, 2));
+      console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
+      saveHistory(dataDir, type, valid);
+    } catch (e) {
+      console.error(`❌ ${type} 抓取失败：${e.message}`);
+    }
+    await sleep(3000 + Math.floor(Math.random() * 2000));
+  }
+
+  // K 线数据（今天已存在则跳过）
   const today = bj.dateStr;
   const klineConfigs = [
     { klt: 101, lmt: 120, suffix: 'daily' },
@@ -363,11 +366,11 @@ async function main() {
         if (!validateKline(result.klines)) {
           console.log(`  ❌ K线数据校验失败，跳过保存`);
         } else {
-          fs.writeFileSync(filePath, JSON.stringify({ name: result.name, klines: result.klines }));
+          fs.writeFileSync(filePath, JSON.stringify({ updatedAt, source: result.source === 'sina' ? '新浪财经' : '东方财富', name: result.name, klines: result.klines }));
           console.log(`✓ ${fileName} saved (${result.klines.length} items, source: ${result.source})`);
         }
       } catch (e) {
-        console.error(` ${fileName} 抓取失败：${e.message}`);
+        console.error(`❌ ${fileName} 抓取失败：${e.message}`);
       }
       await sleep(2000); // K线间隔短一些（新浪不限流）
     }
