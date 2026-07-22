@@ -91,7 +91,7 @@ async function fetchPage(filterStr, fid, sort, fields, pageSize, page, retries =
       return { items: json.data.diff, total: json.data.total };
     } catch (e) {
       if (attempt < retries) {
-        const wait = 8000 * attempt;
+        const wait = 5000 * attempt;
         console.log(`  ⚠️ 请求失败（${e.message}），${attempt}/${retries} 重试，等待 ${wait/1000}s...`);
         await sleep(wait);
       } else {
@@ -288,11 +288,7 @@ async function main() {
     return;
   }
 
-  // 随机跳过（50% 概率），让抓取间隔在 15~45 分钟之间随机分布
-  if (Math.random() < 0.5) {
-    console.log('🎲 本轮随机跳过（下次再抓），避免固定频率被识别。');
-    return;
-  }
+  // 每天只抓两次（开盘后+收盘后），不需要随机跳过
 
   const dataDir = path.join(__dirname, 'public', 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
@@ -312,7 +308,7 @@ async function main() {
     } catch (e) {
       console.error(`❌ ${type} 抓取失败：${e.message}`);
     }
-    await sleep(5000 + Math.floor(Math.random() * 3000)); // 5~8s 随机间隔
+    await sleep(3000 + Math.floor(Math.random() * 2000)); // 3~5s 随机间隔
   }
 
   // 资金流向数据
@@ -330,7 +326,7 @@ async function main() {
     } catch (e) {
       console.error(`❌ ${type} 抓取失败：${e.message}`);
     }
-    await sleep(5000 + Math.floor(Math.random() * 3000));
+    await sleep(3000 + Math.floor(Math.random() * 2000));
   }
 
   // K 线数据
