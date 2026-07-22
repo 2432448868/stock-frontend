@@ -64,7 +64,7 @@ const COMMON_HEADERS = {
 // 请求间延迟，避免短时间大量请求触发反爬
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function fetchPage(filterStr, fid, sort, fields, pageSize, page, retries = 3) {
+async function fetchPage(filterStr, fid, sort, fields, pageSize, page, retries = 5) {
   const params = new URLSearchParams({
     fs: filterStr, fid, po: sort,
     pz: String(pageSize), pn: String(page),
@@ -91,8 +91,8 @@ async function fetchPage(filterStr, fid, sort, fields, pageSize, page, retries =
       return { items: json.data.diff, total: json.data.total };
     } catch (e) {
       if (attempt < retries) {
-        const wait = 5000 * attempt;
-        console.log(`  ⚠️ 请求失败（${e.message}），${attempt}/${retries} 重试，等待 ${wait/1000}s...`);
+        const wait = 10000 * attempt; // 10s / 20s / 30s / 40s / 50s
+        console.log(`  ️ 请求失败（${e.message}），${attempt}/${retries} 重试，等待 ${wait/1000}s...`);
         await sleep(wait);
       } else {
         throw e;
@@ -307,7 +307,7 @@ async function main() {
     } catch (e) {
       console.error(`❌ ${type} 抓取失败：${e.message}`);
     }
-    await sleep(3000 + Math.floor(Math.random() * 2000));
+    await sleep(8000 + Math.floor(Math.random() * 5000)); // 8~13s（给服务器充足冷却）
   }
 
   // 资金流向数据（东方财富）
@@ -325,7 +325,7 @@ async function main() {
     } catch (e) {
       console.error(`❌ ${type} 抓取失败：${e.message}`);
     }
-    await sleep(3000 + Math.floor(Math.random() * 2000));
+    await sleep(8000 + Math.floor(Math.random() * 5000)); // 8~13s
   }
 
   // K 线数据（今天已存在则跳过）
