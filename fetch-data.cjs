@@ -91,7 +91,10 @@ async function fetchPage(filterStr, fid, sort, fields, pageSize, page, retries =
       return { items: json.data.diff, total: json.data.total };
     } catch (e) {
       if (attempt < retries) {
-        const wait = 10000 * attempt; // 10s / 20s / 30s / 40s / 50s
+        // 502 限流需要更长的冷却时间（60s 起步），其他错误用较短间隔
+        const isRateLimit = e.message.includes('限流') || e.message.includes('502');
+        const baseWait = isRateLimit ? 60000 : 10000;
+        const wait = baseWait * attempt;
         console.log(`  ️ 请求失败（${e.message}），${attempt}/${retries} 重试，等待 ${wait/1000}s...`);
         await sleep(wait);
       } else {
@@ -293,7 +296,13 @@ async function main() {
   const updatedAt = `${bj.dateStr} ${String(bj.hours).padStart(2, '0')}:${String(bj.minutes).padStart(2, '0')}:${String(bj.seconds).padStart(2, '0')}`;
 
   // 板块数据（东方财富）
+  let lastFailed = false;
   for (const [type, filterStr] of Object.entries(SECTOR_TYPES)) {
+    // 上一个请求失败时，多等 30s 给服务器冷却
+    if (lastFailed) {
+      console.log(`  ⏳ 上次请求失败，额外等待 30s 冷却...`);
+      await sleep(30000);
+    }
     console.log(`Fetching ${type}...`);
     try {
       const { items: raw } = await fetchPage(filterStr, 'f3', '1', SECTOR_FIELDS.join(','), 100, 1);
@@ -304,14 +313,21 @@ async function main() {
       fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify({ updatedAt, source: '东方财富', data: valid }, null, 2));
       console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
       saveHistory(dataDir, type, valid);
+      lastFailed = false;
     } catch (e) {
       console.error(`❌ ${type} 抓取失败：${e.message}`);
+      lastFailed = true;
     }
-    await sleep(8000 + Math.floor(Math.random() * 5000)); // 8~13s（给服务器充足冷却）
+    await sleep(30000 + Math.floor(Math.random() * 15000)); // 30~45s
   }
 
   // 资金流向数据（东方财富）
   for (const [type, filterStr] of Object.entries(CAPITAL_FLOW_TYPES)) {
+    // 上一个请求失败时，多等 30s 给服务器冷却
+    if (lastFailed) {
+      console.log(`  ⏳ 上次请求失败，额外等待 30s 冷却...`);
+      await sleep(30000);
+    }
     console.log(`Fetching ${type}...`);
     try {
       const { items: raw } = await fetchPage(filterStr, 'f62', '1', CAPITAL_FIELDS.join(','), 100, 1);
@@ -322,10 +338,12 @@ async function main() {
       fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify({ updatedAt, source: '东方财富', data: valid }, null, 2));
       console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
       saveHistory(dataDir, type, valid);
+      lastFailed = false;
     } catch (e) {
       console.error(`❌ ${type} 抓取失败：${e.message}`);
+      lastFailed = true;
     }
-    await sleep(8000 + Math.floor(Math.random() * 5000)); // 8~13s
+    await sleep(30000 + Math.floor(Math.random() * 15000)); // 30~45s
   }
 
   // K 线数据（今天已存在则跳过）
