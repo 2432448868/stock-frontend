@@ -30,12 +30,59 @@ export function formatAmount(v) {
   return sign + abs.toFixed(0);
 }
 
+// 骨架屏：表格行（shimmer 加载占位）
+export function skeletonRows(cols, rows = 6) {
+  const cell = `<td><div class="skeleton sk-cell"></div></td>`;
+  return Array.from({ length: rows }, () => `<tr class="sk-row">${cell.repeat(cols)}</tr>`).join('');
+}
+
+// 骨架屏：洞察卡片网格（2 卡片行 + 1 通栏）
+export function insightSkeleton() {
+  const card = `<div class="insight-card">
+    <div class="skeleton" style="height:14px;width:38%;margin-bottom:14px"></div>
+    <div class="skeleton" style="height:26px;width:62%;margin-bottom:10px"></div>
+    <div class="skeleton" style="height:12px;width:82%"></div>
+  </div>`;
+  const full = `<div class="insight-card full">
+    <div class="skeleton" style="height:14px;width:24%;margin-bottom:12px"></div>
+    <div class="skeleton" style="height:12px;width:90%;margin-bottom:8px"></div>
+    <div class="skeleton" style="height:12px;width:70%"></div>
+  </div>`;
+  return `<div class="insight-grid">${card.repeat(4)}${full}</div>`;
+}
+
 // 市值格式化
 export function formatMarketCap(v) {
   if (v >= 1e12) return (v / 1e12).toFixed(2) + '万亿';
   if (v >= 1e8) return (v / 1e8).toFixed(1) + '亿';
   if (v >= 1e4) return (v / 1e4).toFixed(0) + '万';
   return String(v);
+}
+
+// 数字滚动：easeOutBack 过冲回弹 + 滚动中模糊（聚焦感）+ 落定弹跳
+export function countUp(el, to, { duration = 950, from = 0, format = v => String(v) } = {}) {
+  if (!el) return;
+  const start = performance.now();
+  const c1 = 1.24, c3 = c1 + 1;
+  const ease = p => 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
+  function frame(now) {
+    const p = Math.min(1, (now - start) / duration);
+    el.textContent = format(from + (to - from) * Math.max(0, ease(p)));
+    el.style.filter = p < 1 ? `blur(${((1 - p) ** 2 * 3).toFixed(2)}px)` : '';
+    if (p < 1) requestAnimationFrame(frame);
+    else {
+      el.style.filter = '';
+      el.classList.remove('pop');
+      void el.offsetWidth; // 强制 reflow，重启动画
+      el.classList.add('pop');
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+// 双 rAF：等 DOM 首帧样式生效后再改（用于条形生长动画）
+export function nextFrame(fn) {
+  requestAnimationFrame(() => requestAnimationFrame(fn));
 }
 
 // 北京时间：返回 { hours, minutes, seconds, day, dateStr }

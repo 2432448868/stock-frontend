@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { DATA_PATH, saveCache, loadCache, formatAmount } from './utils.js';
+import { DATA_PATH, saveCache, loadCache, formatAmount, skeletonRows, nextFrame } from './utils.js';
 
 function bindEvents() {
   document.querySelectorAll('.capital-type-btn').forEach(btn => {
@@ -14,7 +14,7 @@ function bindEvents() {
 
 async function loadCapitalFlow() {
   const tbody = document.getElementById('capitalBody');
-  tbody.innerHTML = '<tr><td colspan="9" class="loading">加载中...</td></tr>';
+  tbody.innerHTML = skeletonRows(9);
   try {
     const res = await fetch(`${DATA_PATH}/capital-${state.currentCapitalType}.json?t=${Date.now()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -30,7 +30,7 @@ async function loadCapitalFlow() {
       renderCapitalOverview(cached.data);
       renderCapitalTable(cached.data);
       document.getElementById('capitalOverview').insertAdjacentHTML('afterend',
-        `<div style="text-align:center;padding:6px;font-size:.75rem;color:var(--t2);background:rgba(255,165,0,.1);border-radius:8px;margin-bottom:12px">⚠️ 数据加载失败，显示缓存数据（${new Date(cached.ts).toLocaleTimeString('zh-CN')}）</div>`);
+        `<div style="text-align:center;padding:6px;font-size:.75rem;color:var(--t2);background:var(--accent-soft);border-radius:999px;margin-bottom:12px">数据加载失败，显示缓存数据（${new Date(cached.ts).toLocaleTimeString('zh-CN')}）</div>`);
     } else {
       tbody.innerHTML = `<tr><td colspan="9" class="error"><div>加载失败：${e.message}</div><button class="retry-btn" id="retryCapital">重试</button></td></tr>`;
       document.getElementById('retryCapital')?.addEventListener('click', loadCapitalFlow);
@@ -71,13 +71,20 @@ function renderCapitalTable(data) {
       <td><strong>${d.name}</strong><br><span class="sector-code">${d.code}</span></td>
       <td class="${cpCls}" style="font-weight:600">${sign}${cp.toFixed(2)}%</td>
       <td class="${cls}" style="font-weight:700">${formatAmount(flow)}</td>
-      <td><span class="${cls}">${(d.mainPercent ?? 0) >= 0 ? '+' : ''}${(d.mainPercent ?? 0).toFixed(2)}%</span><div class="flow-bar" style="width:${barWidth}px;background:${flow > 0 ? 'var(--up)' : 'var(--down)'};opacity:.5"></div></td>
+      <td><span class="${cls}">${(d.mainPercent ?? 0) >= 0 ? '+' : ''}${(d.mainPercent ?? 0).toFixed(2)}%</span><div class="flow-bar" data-w="${barWidth}" style="width:0;background:${flow > 0 ? 'var(--up)' : 'var(--down)'};opacity:.5"></div></td>
       <td class="hide-mobile ${cls}">${formatAmount(d.superNetFlow ?? 0)}</td>
       <td class="hide-mobile ${cls}">${formatAmount(d.bigNetFlow ?? 0)}</td>
       <td class="up">${d.upCount ?? 0}</td>
       <td class="down">${d.downCount ?? 0}</td>
     </tr>`;
   }).join('');
+  // 资金条从 0 依次生长到实际宽度（逐条级联）
+  nextFrame(() => {
+    document.querySelectorAll('#capitalBody .flow-bar').forEach((bar, i) => {
+      bar.style.transitionDelay = (i * 22) + 'ms';
+      bar.style.width = bar.dataset.w + 'px';
+    });
+  });
 }
 
 export function initCapital() {

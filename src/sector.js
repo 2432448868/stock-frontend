@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { DATA_PATH, saveCache, loadCache, formatMarketCap } from './utils.js';
+import { DATA_PATH, saveCache, loadCache, formatMarketCap, skeletonRows } from './utils.js';
 
 function bindEvents() {
   document.querySelectorAll('.sector-type-btn').forEach(btn => {
@@ -31,7 +31,7 @@ function bindEvents() {
 
 async function loadSectorData() {
   const tbody = document.getElementById('sectorBody');
-  tbody.innerHTML = '<tr><td colspan="8" class="loading">加载中...</td></tr>';
+  tbody.innerHTML = skeletonRows(8);
   try {
     const res = await fetch(`${DATA_PATH}/${state.currentSectorType}.json?t=${Date.now()}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -46,7 +46,7 @@ async function loadSectorData() {
       state.sectorData[state.currentSectorType] = cached.data;
       renderSector();
       document.getElementById('sectorOverview').insertAdjacentHTML('afterend',
-        `<div id="staleNotice" style="text-align:center;padding:6px;font-size:.75rem;color:var(--t2);background:rgba(255,165,0,.1);border-radius:8px;margin-bottom:8px">⚠️ 数据加载失败，显示缓存数据（${new Date(cached.ts).toLocaleTimeString('zh-CN')}）</div>`);
+        `<div id="staleNotice" style="text-align:center;padding:6px;font-size:.75rem;color:var(--t2);background:var(--accent-soft);border-radius:999px;margin-bottom:8px">数据加载失败，显示缓存数据（${new Date(cached.ts).toLocaleTimeString('zh-CN')}）</div>`);
     } else {
       tbody.innerHTML = `<tr><td colspan="8" class="error"><div>加载失败：${e.message}</div><button class="retry-btn" id="retrySector">重试</button></td></tr>`;
       document.getElementById('retrySector')?.addEventListener('click', loadSectorData);

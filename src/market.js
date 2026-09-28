@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { DATA_PATH, INDICES } from './utils.js';
+import { DATA_PATH, INDICES, countUp } from './utils.js';
 
 // 从 JSON 文件加载 K 线数据
 async function loadKline(secid, klt) {
@@ -27,8 +27,22 @@ function renderIndexCards(klineData) {
     const changePct = (change / prev) * 100;
     const cls = change > 0 ? 'up' : change < 0 ? 'down' : 'flat';
     const sign = change > 0 ? '+' : '';
-    card.querySelector('.price').className = 'price ' + cls;
-    card.querySelector('.price').textContent = close.toFixed(2);
+    // 数据刷新时红/绿背景闪动一下
+    const lastClose = parseFloat(card.dataset.close || '0');
+    const priceEl = card.querySelector('.price');
+    priceEl.className = 'price ' + cls;
+    if (!lastClose) {
+      // 首次渲染：数字从 0 滚上来
+      countUp(priceEl, close, { duration: 900, format: v => v.toFixed(2) });
+    } else {
+      priceEl.textContent = close.toFixed(2);
+      if (close !== lastClose) {
+        priceEl.classList.remove('flash-up', 'flash-down');
+        void priceEl.offsetWidth; // 强制 reflow 重启动画
+        priceEl.classList.add(close > lastClose ? 'flash-up' : 'flash-down');
+      }
+    }
+    card.dataset.close = close;
     card.querySelector('.change').className = 'change ' + cls;
     card.querySelector('.change').textContent = `${sign}${change.toFixed(2)}  ${sign}${changePct.toFixed(2)}%`;
   });
@@ -55,7 +69,7 @@ export function initChart() {
 async function loadChartData(idx, klt) {
   if (!state.chart) return;
   const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-  state.chart.showLoading({ text: '加载中...', color: '#2563eb', textColor: isLight ? '#1f2328' : '#e6edf3', maskColor: isLight ? 'rgba(240,242,245,.8)' : 'rgba(13,17,23,.8)' });
+  state.chart.showLoading({ text: '加载中...', color: '#f0b429', textColor: isLight ? '#282430' : '#f0eef4', maskColor: isLight ? 'rgba(250,248,244,.8)' : 'rgba(23,22,27,.8)' });
   try {
     const result = await loadKline(INDICES[idx].secid, klt);
     const klines = result.data.klines.map(k => k.split(','));
@@ -64,45 +78,57 @@ async function loadChartData(idx, klt) {
     const opens = klines.map(k => +k[1]);
     const volumes = klines.map(k => +k[5]);
 
+    // 主题感知色板：亮色用暖灰浅线，暗色用暖炭深线
+    const pal = isLight
+      ? { tipBg: '#ffffff', tipBorder: '#e8e3d8', tipText: '#282430', axis: '#e8e3d8', label: '#8d8898', split: '#efece4', dzBorder: '#e8e3d8' }
+      : { tipBg: '#1f1e25', tipBorder: '#2b2933', tipText: '#f0eef4', axis: '#2b2933', label: '#93909f', split: '#24232b', dzBorder: '#2b2933' };
+    const tooltipStyle = { backgroundColor: pal.tipBg, borderColor: pal.tipBorder, textStyle: { color: pal.tipText, fontSize: 12, fontFamily: "'Space Grotesk Variable','PingFang SC','Microsoft YaHei',sans-serif" } };
+
     if (klt === '1') {
       state.chart.setOption({
         backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis', backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: '#e6edf3', fontSize: 12 } },
+        animationDuration: idx => 260 + Math.min(idx * 14, 1100),
+        animationEasing: 'cubicOut',
+        animationDurationUpdate: 250,
+        tooltip: { trigger: 'axis', ...tooltipStyle },
         grid: [{ left: 60, right: 20, top: 20, height: '60%' }, { left: 60, right: 20, top: '78%', height: '16%' }],
         xAxis: [
-          { type: 'category', data: dates, gridIndex: 0, axisLine: { lineStyle: { color: '#30363d' } }, axisLabel: { color: '#8b949e', fontSize: 10 }, boundaryGap: false },
-          { type: 'category', data: dates, gridIndex: 1, axisLine: { lineStyle: { color: '#30363d' } }, axisLabel: { show: false }, boundaryGap: false },
+          { type: 'category', data: dates, gridIndex: 0, axisLine: { lineStyle: { color: pal.axis } }, axisLabel: { color: pal.label, fontSize: 10 }, boundaryGap: false },
+          { type: 'category', data: dates, gridIndex: 1, axisLine: { lineStyle: { color: pal.axis } }, axisLabel: { show: false }, boundaryGap: false },
         ],
         yAxis: [
-          { type: 'value', gridIndex: 0, splitLine: { lineStyle: { color: '#21262d' } }, axisLabel: { color: '#8b949e', fontSize: 10 }, scale: true },
+          { type: 'value', gridIndex: 0, splitLine: { lineStyle: { color: pal.split } }, axisLabel: { color: pal.label, fontSize: 10 }, scale: true },
           { type: 'value', gridIndex: 1, splitLine: { show: false }, axisLabel: { show: false }, scale: true },
         ],
         series: [
-          { name: '价格', type: 'line', data: closes, xAxisIndex: 0, yAxisIndex: 0, smooth: true, symbol: 'none', lineStyle: { color: '#2563eb', width: 2 }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(37,99,235,.3)' }, { offset: 1, color: 'rgba(37,99,235,.02)' }]) } },
-          { name: '成交量', type: 'bar', data: volumes.map((v, i) => ({ value: v, itemStyle: { color: closes[i] >= opens[i] ? 'rgba(255,77,79,.4)' : 'rgba(0,185,107,.4)' } })), xAxisIndex: 1, yAxisIndex: 1 },
+          { name: '价格', type: 'line', data: closes, xAxisIndex: 0, yAxisIndex: 0, smooth: true, symbol: 'none', lineStyle: { color: '#f0b429', width: 2 }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(240,180,41,.3)' }, { offset: 1, color: 'rgba(240,180,41,.02)' }]) } },
+          { name: '成交量', type: 'bar', data: volumes.map((v, i) => ({ value: v, itemStyle: { color: closes[i] >= opens[i] ? 'rgba(221,66,55,.4)' : 'rgba(13,157,110,.4)' } })), xAxisIndex: 1, yAxisIndex: 1 },
         ],
       }, true);
     } else {
       const ohlc = klines.map(k => [+k[1], +k[2], +k[4], +k[3]]);
       state.chart.setOption({
         backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis', backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: '#e6edf3', fontSize: 12 } },
+        animationDuration: idx => 260 + Math.min(idx * 14, 1100),
+        animationEasing: 'cubicOut',
+        animationDurationUpdate: 250,
+        tooltip: { trigger: 'axis', ...tooltipStyle },
         grid: [{ left: 60, right: 20, top: 20, height: '60%' }, { left: 60, right: 20, top: '78%', height: '16%' }],
         xAxis: [
-          { type: 'category', data: dates, gridIndex: 0, axisLine: { lineStyle: { color: '#30363d' } }, axisLabel: { color: '#8b949e', fontSize: 10 }, boundaryGap: true },
-          { type: 'category', data: dates, gridIndex: 1, axisLine: { lineStyle: { color: '#30363d' } }, axisLabel: { show: false }, boundaryGap: true },
+          { type: 'category', data: dates, gridIndex: 0, axisLine: { lineStyle: { color: pal.axis } }, axisLabel: { color: pal.label, fontSize: 10 }, boundaryGap: true },
+          { type: 'category', data: dates, gridIndex: 1, axisLine: { lineStyle: { color: pal.axis } }, axisLabel: { show: false }, boundaryGap: true },
         ],
         yAxis: [
-          { type: 'value', gridIndex: 0, splitLine: { lineStyle: { color: '#21262d' } }, axisLabel: { color: '#8b949e', fontSize: 10 }, scale: true },
+          { type: 'value', gridIndex: 0, splitLine: { lineStyle: { color: pal.split } }, axisLabel: { color: pal.label, fontSize: 10 }, scale: true },
           { type: 'value', gridIndex: 1, splitLine: { show: false }, axisLabel: { show: false }, scale: true },
         ],
         dataZoom: [
           { type: 'inside', xAxisIndex: [0, 1], start: klt === '102' ? 0 : 60, end: 100 },
-          { type: 'slider', xAxisIndex: [0, 1], bottom: 5, height: 16, borderColor: '#30363d', fillerColor: 'rgba(37,99,235,.15)', handleStyle: { color: '#2563eb' }, textStyle: { color: '#8b949e' } },
+          { type: 'slider', xAxisIndex: [0, 1], bottom: 5, height: 16, borderColor: pal.dzBorder, fillerColor: 'rgba(240,180,41,.15)', handleStyle: { color: '#f0b429' }, textStyle: { color: pal.label } },
         ],
         series: [
-          { name: 'K线', type: 'candlestick', data: ohlc, xAxisIndex: 0, yAxisIndex: 0, itemStyle: { color: '#ff4d4f', color0: '#00b96b', borderColor: '#ff4d4f', borderColor0: '#00b96b' } },
-          { name: '成交量', type: 'bar', data: volumes.map((v, i) => ({ value: v, itemStyle: { color: closes[i] >= opens[i] ? 'rgba(255,77,79,.5)' : 'rgba(0,185,107,.5)' } })), xAxisIndex: 1, yAxisIndex: 1 },
+          { name: 'K线', type: 'candlestick', data: ohlc, xAxisIndex: 0, yAxisIndex: 0, itemStyle: { color: '#ff6b5e', color0: '#3ecf8e', borderColor: '#ff6b5e', borderColor0: '#3ecf8e' } },
+          { name: '成交量', type: 'bar', data: volumes.map((v, i) => ({ value: v, itemStyle: { color: closes[i] >= opens[i] ? 'rgba(255,107,94,.5)' : 'rgba(62,207,142,.5)' } })), xAxisIndex: 1, yAxisIndex: 1 },
         ],
       }, true);
     }

@@ -7,32 +7,36 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/space-grotesk@5/index.css">
 <title>wkl's Analysis of A-share data</title>
 </head>
 <body>
+<div id="curtain"></div>
 <button class="theme-toggle" id="themeToggle" title="切换主题">🌙</button>
 <div class="container">
   <div class="header">
-    <h1>wkl's Analysis of A-share data</h1>
+    <h1>wkl's Analysis of <em>A-share</em> data</h1>
     <p class="sub" id="statusText">东方财富 · 数据加载中...</p>
   </div>
 
   <div class="nav-tabs">
-    <button class="nav-tab active" data-tab="insight">🧠 市场洞察</button>
-    <button class="nav-tab" data-tab="market">📈 大盘走势</button>
-    <button class="nav-tab" data-tab="capital">💰 资金流向</button>
-    <button class="nav-tab" data-tab="sector">📊 板块分析</button>
+    <span class="nav-pill"></span>
+    <button class="nav-tab active" data-tab="insight">市场洞察</button>
+    <button class="nav-tab" data-tab="market">大盘走势</button>
+    <button class="nav-tab" data-tab="capital">资金流向</button>
+    <button class="nav-tab" data-tab="sector">板块分析</button>
   </div>
 
+  <div class="panels">
   <div id="panel-insight" class="tab-panel active">
-    <div id="insightContent"><div class="loading">正在生成市场洞察...</div></div>
+    <div id="insightContent"></div>
   </div>
 
   <div id="panel-market" class="tab-panel">
     <div class="index-cards" id="indexCards">
-      <div class="index-card selected" data-idx="0"><div class="name">上证指数</div><div class="price">-</div><div class="change">-</div></div>
-      <div class="index-card" data-idx="1"><div class="name">深证成指</div><div class="price">-</div><div class="change">-</div></div>
-      <div class="index-card" data-idx="2"><div class="name">创业板指</div><div class="price">-</div><div class="change">-</div></div>
+      <div class="index-card selected" data-idx="0"><span class="spot"></span><div class="name">上证指数</div><div class="price">-</div><div class="change">-</div></div>
+      <div class="index-card" data-idx="1"><span class="spot"></span><div class="name">深证成指</div><div class="price">-</div><div class="change">-</div></div>
+      <div class="index-card" data-idx="2"><span class="spot"></span><div class="name">创业板指</div><div class="price">-</div><div class="change">-</div></div>
     </div>
     <div class="chart-box">
       <div class="chart-bar">
@@ -56,7 +60,7 @@
         <th style="width:40px">#</th><th>板块名称</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th>
         <th class="hide-mobile">超大单净流入</th><th class="hide-mobile">大单净流入</th><th>上涨</th><th>下跌</th>
       </tr></thead>
-      <tbody id="capitalBody"><tr><td colspan="9" class="loading">加载中...</td></tr></tbody>
+      <tbody id="capitalBody"><tr class="sk-row"><td colspan="9"><div class="skeleton sk-cell"></div></td></tr><tr class="sk-row"><td colspan="9"><div class="skeleton sk-cell"></div></td></tr><tr class="sk-row"><td colspan="9"><div class="skeleton sk-cell"></div></td></tr></tbody>
     </table>
   </div>
 
@@ -67,7 +71,7 @@
       <button class="chart-btn sector-type-btn" data-stype="region">地域板块</button>
     </div>
     <div class="overview" id="sectorOverview"></div>
-    <div class="search-bar"><span class="search-icon">🔍</span><input type="text" id="searchInput" placeholder="搜索板块名称或代码..."></div>
+    <div class="search-bar"><span class="search-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span><input type="text" id="searchInput" placeholder="搜索板块名称或代码..."></div>
     <table>
       <thead><tr>
         <th data-sort="rank" class="sorted">排名<span class="si">▲</span></th><th data-sort="name">板块名称</th>
@@ -75,8 +79,9 @@
         <th data-sort="upCount">上涨<span class="si"></span></th><th data-sort="downCount">下跌<span class="si"></span></th>
         <th data-sort="marketCap" class="hide-mobile">总市值<span class="si"></span></th><th class="hide-mobile">领涨股</th>
       </tr></thead>
-      <tbody id="sectorBody"><tr><td colspan="8" class="loading">加载中...</td></tr></tbody>
+      <tbody id="sectorBody"><tr class="sk-row"><td colspan="8"><div class="skeleton sk-cell"></div></td></tr><tr class="sk-row"><td colspan="8"><div class="skeleton sk-cell"></div></td></tr><tr class="sk-row"><td colspan="8"><div class="skeleton sk-cell"></div></td></tr></tbody>
     </table>
+  </div>
   </div>
 </div>
 
