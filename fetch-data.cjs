@@ -4,7 +4,10 @@ const fs = require('fs');
 const path = require('path');
 
 const EASTMONEY_API = 'https://push2.eastmoney.com/api/qt/clist/get';
-// K 线改用新浪财经 API（东方财富对 GitHub Actions IP 限流严重）
+// K 线：腾讯主源（不限流、无需鉴权，参考 github.com/simonlin1212/a-stock-data 的源分级）
+const TENCENT_FQKLINE_API = 'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get';
+const TENCENT_MKLINE_API = 'https://ifzq.gtimg.cn/appstock/app/kline/mkline';
+// K 线降级源：新浪（东财对 GitHub Actions IP 限流严重，仅作最后兜底）
 const SINA_KLINE_API = 'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData';
 const SINA_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -22,7 +25,7 @@ const CAPITAL_FLOW_TYPES = {
   'capital-concept': 'm:90 t:3',
 };
 
-// 三大指数 K 线配置（同时包含新浪和东方财富的代码）
+// 三大指数 K 线配置（腾讯/新浪用 sina 代码，东方财富用 secid）
 const KLINE_INDICES = [
   { id: 'kline-000001', secid: '1.000001', sina: 'sh000001', name: '上证指数' },
   { id: 'kline-399001', secid: '0.399001', sina: 'sz399001', name: '深证成指' },
@@ -161,7 +164,36 @@ function validateKline(klines) {
   return true;
 }
 
-// ========== K 线数据抓取（新浪主源 + 东方财富降级） ==========
+// ========== K 线数据抓取（腾讯主源 + 新浪降级 + 东方财富兜底） ==========
+
+// 腾讯 K 线：日K/周K 走 fqkline，分钟走 mkline
+// 日/周返回 [日期,开,收,高,低,量]，分钟返回 [YYYYMMDDHHmm,开,收,高,低,量,...]
+async function fetchKlineTencent(sinaCode, klt, lmt) {
+  let arr;
+  if (klt === 1) {
+    const res = await fetch(`${TENCENT_MKLINE_API}?param=${sinaCode},m1,,${lmt}`);
+    const text = await res.text();
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    let json;
+    try { json = JSON.parse(text); } catch { throw new Error('JSON 解析失败'); }
+    arr = json.data?.[sinaCode]?.m1;
+    if (!Array.isArray(arr) || arr.length === 0) throw new Error('返回数据为空');
+    // "202609281130" → "2026-09-28 11:30"
+    return { klines: arr.map(k => `${k[0].slice(0, 4)}-${k[0].slice(4, 6)}-${k[0].slice(6, 8)} ${k[0].slice(8, 10)}:${k[0].slice(10, 12)},${k[1]},${k[2]},${k[3]},${k[4]},${k[5]}`) };
+  }
+  const period = klt === 102 ? 'week' : 'day';
+  const res = await fetch(`${TENCENT_FQKLINE_API}?param=${sinaCode},${period},,,${lmt},qfq`);
+  const text = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  let json;
+  try { json = JSON.parse(text); } catch { throw new Error('JSON 解析失败'); }
+  // 带 qfq 时 key 可能是 qfqday/qfqweek，不带时是 day/week
+  const obj = json.data?.[sinaCode];
+  arr = obj?.[`qfq${period}`] || obj?.[period];
+  if (!Array.isArray(arr) || arr.length === 0) throw new Error('返回数据为空');
+  // [日期,开,收,高,低,量] 与统一格式顺序一致，直接拼接
+  return { klines: arr.map(k => k.slice(0, 6).join(',')) };
+}
 
 // 新浪 K 线 scale：240=日K, 1200=周K(5天×240分), 1=分钟K
 async function fetchKlineSina(sinaCode, klt, lmt) {
@@ -185,7 +217,7 @@ async function fetchKlineSina(sinaCode, klt, lmt) {
   const klines = data.map(d =>
     `${d.day},${d.open},${d.close},${d.high},${d.low},${d.volume}`
   );
-  return { name: sinaCode, klines };
+  return { klines };
 }
 
 // 东方财富 K 线（降级备用）
@@ -209,15 +241,26 @@ async function fetchKlineEastMoney(secid, klt, lmt) {
   return { name: json.data.name, klines: json.data.klines };
 }
 
-// 统一入口：先试新浪，失败再用东方财富
+// 统一入口：腾讯 → 新浪 → 东方财富 三级降级
+const KLINE_SOURCE_NAMES = { tencent: '腾讯财经', sina: '新浪财经', eastmoney: '东方财富' };
+
 async function fetchKline(idx, klt, lmt) {
-  try {
-    const data = await fetchKlineSina(idx.sina, klt, lmt);
-    return { source: 'sina', ...data };
-  } catch (e) {
-    console.log(`  ⚠️ 新浪 K 线失败（${e.message}），降级到东方财富...`);
-    const data = await fetchKlineEastMoney(idx.secid, klt, lmt);
-    return { source: 'eastmoney', ...data };
+  const fallbacks = [
+    { source: 'tencent', fn: () => fetchKlineTencent(idx.sina, klt, lmt) },
+    { source: 'sina', fn: () => fetchKlineSina(idx.sina, klt, lmt) },
+    { source: 'eastmoney', fn: () => fetchKlineEastMoney(idx.secid, klt, lmt) },
+  ];
+  for (let i = 0; i < fallbacks.length; i++) {
+    try {
+      const data = await fallbacks[i].fn();
+      return { source: fallbacks[i].source, ...data };
+    } catch (e) {
+      if (i < fallbacks.length - 1) {
+        console.log(`  ⚠️ ${KLINE_SOURCE_NAMES[fallbacks[i].source]} K 线失败（${e.message}），降级到${KLINE_SOURCE_NAMES[fallbacks[i + 1].source]}...`);
+      } else {
+        throw e;
+      }
+    }
   }
 }
 
@@ -379,13 +422,13 @@ async function main() {
         if (!validateKline(result.klines)) {
           console.log(`  ❌ K线数据校验失败，跳过保存`);
         } else {
-          fs.writeFileSync(filePath, JSON.stringify({ updatedAt, source: result.source === 'sina' ? '新浪财经' : '东方财富', name: result.name, klines: result.klines }));
+          fs.writeFileSync(filePath, JSON.stringify({ updatedAt, source: KLINE_SOURCE_NAMES[result.source], name: result.name || idx.name, klines: result.klines }));
           console.log(`✓ ${fileName} saved (${result.klines.length} items, source: ${result.source})`);
         }
       } catch (e) {
         console.error(`❌ ${fileName} 抓取失败：${e.message}`);
       }
-      await sleep(2000); // K线间隔短一些（新浪不限流）
+      await sleep(2000); // K线间隔短一些（腾讯不限流）
     }
   }
 
