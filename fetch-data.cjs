@@ -1,441 +1,100 @@
 #!/usr/bin/env node
-
-const fs = require('fs');
-const path = require('path');
-
-const EASTMONEY_API = 'https://push2.eastmoney.com/api/qt/clist/get';
-// K 线：腾讯主源（不限流、无需鉴权，参考 github.com/simonlin1212/a-stock-data 的源分级）
-const TENCENT_FQKLINE_API = 'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get';
-const TENCENT_MKLINE_API = 'https://ifzq.gtimg.cn/appstock/app/kline/mkline';
-// K 线降级源：新浪（东财对 GitHub Actions IP 限流严重，仅作最后兜底）
-const SINA_KLINE_API = 'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData';
-const SINA_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-  'Referer': 'https://finance.sina.com.cn/',
+const fs = require('node:fs');
+const path = require('node:path');
+const { beijingNow, isTradingDay, previousTradingDay } = require('./scripts/data/calendar.cjs');
+const { FILTERS, INDICES, fetchBoards, fetchIndex } = require('./scripts/data/sources.cjs');
+const { readJson, publishGroup, pruneHistory } = require('./scripts/data/storage.cjs');
+const DATA_DIR = path.join(__dirname, 'public', 'data');
+const SCHEMA_VERSION = 2;
+const GROUPS = {
+  industry: ['industry.json', 'capital-industry.json'],
+  concept: ['concept.json', 'capital-concept.json'],
+  region: ['region.json'],
+  ...Object.fromEntries(INDICES.map(index => [index.code,
+    ['kline-' + index.code + '-daily.json', 'kline-' + index.code + '-weekly.json']])),
 };
-
-const SECTOR_TYPES = {
-  industry: 'm:90 t:2',
-  concept: 'm:90 t:3',
-  region: 'm:90 t:1',
-};
-
-const CAPITAL_FLOW_TYPES = {
-  'capital-industry': 'm:90 t:2',
-  'capital-concept': 'm:90 t:3',
-};
-
-// 三大指数 K 线配置（腾讯/新浪用 sina 代码，东方财富用 secid）
-const KLINE_INDICES = [
-  { id: 'kline-000001', secid: '1.000001', sina: 'sh000001', name: '上证指数' },
-  { id: 'kline-399001', secid: '0.399001', sina: 'sz399001', name: '深证成指' },
-  { id: 'kline-399006', secid: '0.399006', sina: 'sz399006', name: '创业板指' },
-];
-
-// 2026 年 A 股休市日（法定节假日 + 周末已自动跳过）
-const HOLIDAYS_2026 = new Set([
-  // 元旦
-  '2026-01-01', '2026-01-02',
-  // 春节
-  '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20',
-  // 清明节
-  '2026-04-06',
-  // 劳动节
-  '2026-05-01', '2026-05-04', '2026-05-05',
-  // 端午节
-  '2026-05-31', '2026-06-01',
-  // 中秋节
-  '2026-09-25',
-  // 国庆节
-  '2026-10-01', '2026-10-02', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08',
-]);
-
-// 前端需要的字段（JSON 瘦身：只保留这些，其余丢弃）
-const SECTOR_FIELDS = ['f12', 'f14', 'f2', 'f3', 'f4', 'f20', 'f104', 'f105', 'f128', 'f136'];
-const CAPITAL_FIELDS = ['f12', 'f14', 'f3', 'f62', 'f184', 'f66', 'f72', 'f104', 'f105'];
-
-// ========== API 请求 ==========
-
-// 模拟真实浏览器的完整请求头，避免被反爬识别
-const COMMON_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-  'Accept': '*/*',
-  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-  'Referer': 'https://quote.eastmoney.com/',
-};
-
-// 请求间延迟，避免短时间大量请求触发反爬
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-async function fetchPage(filterStr, fid, sort, fields, pageSize, page, retries = 5) {
-  const params = new URLSearchParams({
-    fs: filterStr, fid, po: sort,
-    pz: String(pageSize), pn: String(page),
-    np: '1', fltt: '2', invt: '2', ut: 'fa5fd1402c7fe063136ef88a0db19a9f',
-    fields,
-  });
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch(`${EASTMONEY_API}?${params}`, { headers: COMMON_HEADERS });
-      const text = await res.text();
-
-      if (res.status === 502 || res.status === 503 || res.status === 429) {
-        throw new Error(`HTTP ${res.status}（服务端限流）`);
-      }
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}，响应：${text.slice(0, 200)}`);
-      }
-      if (text.startsWith('<')) {
-        throw new Error(`API 返回 HTML，前 200 字符：${text.slice(0, 200)}`);
-      }
-
-      const json = JSON.parse(text);
-      if (!json.data?.diff) throw new Error(`第 ${page} 页 API 数据异常：${text.slice(0, 200)}`);
-      return { items: json.data.diff, total: json.data.total };
-    } catch (e) {
-      if (attempt < retries) {
-        // 502 限流需要更长的冷却时间（60s 起步），其他错误用较短间隔
-        const isRateLimit = e.message.includes('限流') || e.message.includes('502');
-        const baseWait = isRateLimit ? 60000 : 10000;
-        const wait = baseWait * attempt;
-        console.log(`  ️ 请求失败（${e.message}），${attempt}/${retries} 重试，等待 ${wait/1000}s...`);
-        await sleep(wait);
-      } else {
-        throw e;
-      }
-    }
-  }
-}
-
-// ========== 数据转换（原始字段码 → 语义化命名） ==========
-
-function transformSector(raw) {
+function metadata(files) {
+  const items = files.map(file => readJson(path.join(DATA_DIR, file)));
+  const dates = items.map(item => item?.dataDate).filter(Boolean);
   return {
-    code: raw.f12,
-    name: raw.f14,
-    changePercent: raw.f3 != null ? +(raw.f3 / 100).toFixed(2) : 0,
-    changeAmount: raw.f4 != null ? +(raw.f4 / 100).toFixed(2) : 0,
-    marketCap: raw.f20 ?? 0,
-    upCount: raw.f104 ?? 0,
-    downCount: raw.f105 ?? 0,
-    leadingStock: raw.f128 || '',
-    leadingChange: raw.f136 != null ? +(raw.f136 / 100).toFixed(2) : 0,
+    dataDate: dates.length === items.length && new Set(dates).size === 1 ? dates[0] : null,
+    updatedAt: items[0]?.updatedAt || null,
+    freshness: items.every(item => item?.freshness === 'verified') ? 'verified' : 'provisional',
+    source: items[0]?.source || null,
   };
 }
-
-function transformCapital(raw) {
-  return {
-    code: raw.f12,
-    name: raw.f14,
-    changePercent: raw.f3 != null ? +(raw.f3 / 100).toFixed(2) : 0,
-    mainNetFlow: raw.f62 ?? 0,
-    mainPercent: raw.f184 ?? 0,
-    superNetFlow: raw.f66 ?? 0,
-    bigNetFlow: raw.f72 ?? 0,
-    upCount: raw.f104 ?? 0,
-    downCount: raw.f105 ?? 0,
-  };
+function isComplete(files, targetDate) {
+  const items = files.map(file => readJson(path.join(DATA_DIR, file)));
+  return items.every(item => item?.schemaVersion === SCHEMA_VERSION && item.dataDate === targetDate &&
+    item.freshness === 'verified' && item.batchId &&
+    Array.isArray(item.data || item.klines) && (item.data || item.klines).length > 0) &&
+    new Set(items.map(item => item.batchId)).size === 1;
 }
-
-// ========== 数据校验（异常数据不入库） ==========
-
-function validateSector(item) {
-  if (!item.code || !item.name) return false;
-  if (typeof item.changePercent !== 'number' || isNaN(item.changePercent)) return false;
-  if (item.changePercent > 22 || item.changePercent < -22) return false; // 涨跌停 ±20% + 容差
-  if (item.marketCap < 0) return false;
-  if (item.upCount < 0 || item.downCount < 0) return false;
-  return true;
-}
-
-function validateCapital(item) {
-  if (!item.code || !item.name) return false;
-  if (typeof item.mainNetFlow !== 'number' || isNaN(item.mainNetFlow)) return false;
-  if (typeof item.changePercent !== 'number' || isNaN(item.changePercent)) return false;
-  return true;
-}
-
-function validateKline(klines) {
-  if (!Array.isArray(klines) || klines.length === 0) return false;
-  // 检查每条 K 线格式：日期,开盘,收盘,最高,最低,成交量
-  const sample = klines[0].split(',');
-  if (sample.length !== 6) return false;
-  if (isNaN(parseFloat(sample[1]))) return false; // 开盘价必须是数字
-  return true;
-}
-
-// ========== K 线数据抓取（腾讯主源 + 新浪降级 + 东方财富兜底） ==========
-
-// 腾讯 K 线：日K/周K 走 fqkline，分钟走 mkline
-// 日/周返回 [日期,开,收,高,低,量]，分钟返回 [YYYYMMDDHHmm,开,收,高,低,量,...]
-async function fetchKlineTencent(sinaCode, klt, lmt) {
-  let arr;
-  if (klt === 1) {
-    const res = await fetch(`${TENCENT_MKLINE_API}?param=${sinaCode},m1,,${lmt}`);
-    const text = await res.text();
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    let json;
-    try { json = JSON.parse(text); } catch { throw new Error('JSON 解析失败'); }
-    arr = json.data?.[sinaCode]?.m1;
-    if (!Array.isArray(arr) || arr.length === 0) throw new Error('返回数据为空');
-    // "202609281130" → "2026-09-28 11:30"
-    return { klines: arr.map(k => `${k[0].slice(0, 4)}-${k[0].slice(4, 6)}-${k[0].slice(6, 8)} ${k[0].slice(8, 10)}:${k[0].slice(10, 12)},${k[1]},${k[2]},${k[3]},${k[4]},${k[5]}`) };
-  }
-  const period = klt === 102 ? 'week' : 'day';
-  const res = await fetch(`${TENCENT_FQKLINE_API}?param=${sinaCode},${period},,,${lmt},qfq`);
-  const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  let json;
-  try { json = JSON.parse(text); } catch { throw new Error('JSON 解析失败'); }
-  // 带 qfq 时 key 可能是 qfqday/qfqweek，不带时是 day/week
-  const obj = json.data?.[sinaCode];
-  arr = obj?.[`qfq${period}`] || obj?.[period];
-  if (!Array.isArray(arr) || arr.length === 0) throw new Error('返回数据为空');
-  // [日期,开,收,高,低,量] 与统一格式顺序一致，直接拼接
-  return { klines: arr.map(k => k.slice(0, 6).join(',')) };
-}
-
-// 新浪 K 线 scale：240=日K, 1200=周K(5天×240分), 1=分钟K
-async function fetchKlineSina(sinaCode, klt, lmt) {
-  // klt: 101=日K, 102=周K, 1=分钟K
-  const scale = klt === 101 ? 240 : klt === 102 ? 1200 : 1;
-  const params = new URLSearchParams({
-    symbol: sinaCode, scale: String(scale),
-    ma: 'no', datalen: String(lmt),
-  });
-  const res = await fetch(`${SINA_KLINE_API}?${params}`, { headers: SINA_HEADERS });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  if (text.startsWith('<')) throw new Error(`API 返回 HTML：${text.slice(0, 100)}`);
-
-  let data;
-  try { data = JSON.parse(text); } catch { throw new Error('JSON 解析失败'); }
-  if (!Array.isArray(data) || data.length === 0) throw new Error('返回数据为空');
-
-  // 新浪返回格式：[{day, open, high, low, close, volume}, ...]
-  // 转为统一格式：['日期,开盘,收盘,最高,最低,成交量', ...]
-  const klines = data.map(d =>
-    `${d.day},${d.open},${d.close},${d.high},${d.low},${d.volume}`
-  );
-  return { klines };
-}
-
-// 东方财富 K 线（降级备用）
-const KLINE_API = 'https://push2his.eastmoney.com/api/qt/stock/kline/get';
-
-async function fetchKlineEastMoney(secid, klt, lmt) {
-  const params = new URLSearchParams({
-    secid, fields1: 'f1,f2,f3', fields2: 'f51,f52,f53,f54,f55,f56',
-    klt: String(klt), fqt: '1', end: '20500101', lmt: String(lmt),
-    ut: 'fa5fd1402c7fe063136ef88a0db19a9f',
-  });
-  const res = await fetch(`${KLINE_API}?${params}`, { headers: COMMON_HEADERS });
-  const text = await res.text();
-  if (res.status === 502 || res.status === 503 || res.status === 429) {
-    throw new Error(`HTTP ${res.status}（服务端限流）`);
-  }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  if (text.startsWith('<')) throw new Error(`API 返回 HTML`);
-  const json = JSON.parse(text);
-  if (!json.data?.klines) throw new Error('K线数据异常');
-  return { name: json.data.name, klines: json.data.klines };
-}
-
-// 统一入口：腾讯 → 新浪 → 东方财富 三级降级
-const KLINE_SOURCE_NAMES = { tencent: '腾讯财经', sina: '新浪财经', eastmoney: '东方财富' };
-
-async function fetchKline(idx, klt, lmt) {
-  const fallbacks = [
-    { source: 'tencent', fn: () => fetchKlineTencent(idx.sina, klt, lmt) },
-    { source: 'sina', fn: () => fetchKlineSina(idx.sina, klt, lmt) },
-    { source: 'eastmoney', fn: () => fetchKlineEastMoney(idx.secid, klt, lmt) },
-  ];
-  for (let i = 0; i < fallbacks.length; i++) {
-    try {
-      const data = await fallbacks[i].fn();
-      return { source: fallbacks[i].source, ...data };
-    } catch (e) {
-      if (i < fallbacks.length - 1) {
-        console.log(`  ⚠️ ${KLINE_SOURCE_NAMES[fallbacks[i].source]} K 线失败（${e.message}），降级到${KLINE_SOURCE_NAMES[fallbacks[i + 1].source]}...`);
-      } else {
-        throw e;
-      }
-    }
-  }
-}
-
-// ========== 节假日判断 ==========
-
-// 北京时间：使用 Intl API 直接获取 Asia/Shanghai 时区的时间
-function getBeijingNow() {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  }).formatToParts(now);
-  const get = (type) => parts.find(p => p.type === type)?.value;
-  return {
-    hours: parseInt(get('hour')),
-    minutes: parseInt(get('minute')),
-    seconds: parseInt(get('second')),
-    dateStr: `${get('year')}-${get('month')}-${get('day')}`,
-  };
-}
-
-function isTradingDay() {
-  const bj = getBeijingNow();
-  // 用 dateStr 构造 Date 获取星期几（0=周日, 6=周六）
-  const dayOfWeek = new Date(bj.dateStr).getDay();
-  if (dayOfWeek === 0 || dayOfWeek === 6) return false;
-  return !HOLIDAYS_2026.has(bj.dateStr);
-}
-
-// ========== 历史数据管理 ==========
-
-function saveHistory(dataDir, type, data) {
-  const histDir = path.join(dataDir, 'history');
-  if (!fs.existsSync(histDir)) fs.mkdirSync(histDir, { recursive: true });
-
-  const bj = getBeijingNow();
-  const dateStr = bj.dateStr;
-  const histFile = path.join(histDir, `${type}-${dateStr}.json`);
-
-  fs.writeFileSync(histFile, JSON.stringify(data));
-  console.log(`  📁 历史存档：${type}-${dateStr}.json`);
-
-  // 清理 30 天前的历史文件
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - 30);
-  const cutoff = cutoffDate.toISOString().slice(0, 10);
-  let cleaned = 0;
-  fs.readdirSync(histDir).forEach(f => {
-    const match = f.match(/-(\d{4}-\d{2}-\d{2})\.json$/);
-    if (match && match[1] < cutoff) {
-      fs.unlinkSync(path.join(histDir, f));
-      cleaned++;
-    }
-  });
-  if (cleaned > 0) console.log(`  🧹 清理 ${cleaned} 个过期历史文件`);
-}
-
-// ========== 主流程 ==========
-
 async function main() {
-  // 节假日检查
-  if (!isTradingDay()) {
-    console.log('今天不是交易日，跳过抓取。');
-    return;
+  const now = beijingNow();
+  const requestedSlot = process.env.FETCH_SLOT || 'auto';
+  if (!['auto', 'morning', 'afternoon'].includes(requestedSlot)) throw new Error('FETCH_SLOT 必须为 auto/morning/afternoon');
+  const slot = requestedSlot === 'auto' ? (now.time < '12:00:00' ? 'morning' : 'afternoon') : requestedSlot;
+  if (!isTradingDay(now.date)) { console.log('休市日，跳过采集'); return; }
+  if ((slot === 'afternoon' && now.time < '15:00:00') || (slot === 'morning' && now.time < '09:00:00')) {
+    throw new Error('尚未到本轮采集时间，不发布非预期时段数据');
   }
-
-  // 每天只抓两次（开盘后+收盘后），不需要随机跳过
-
-  const dataDir = path.join(__dirname, 'public', 'data');
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
-
-  // 统一时间戳（所有文件共享同一抓取时间）
-  const bj = getBeijingNow();
-  const updatedAt = `${bj.dateStr} ${String(bj.hours).padStart(2, '0')}:${String(bj.minutes).padStart(2, '0')}:${String(bj.seconds).padStart(2, '0')}`;
-
-  // 板块数据（东方财富）
-  let lastFailed = false;
-  for (const [type, filterStr] of Object.entries(SECTOR_TYPES)) {
-    // 上一个请求失败时，多等 30s 给服务器冷却
-    if (lastFailed) {
-      console.log(`  ⏳ 上次请求失败，额外等待 30s 冷却...`);
-      await sleep(30000);
-    }
-    console.log(`Fetching ${type}...`);
+  const targetDate = slot === 'morning' ? previousTradingDay(now.date) : now.date;
+  const status = { schemaVersion: SCHEMA_VERSION, attemptedAt: new Date().toISOString(), slot, targetDate, groups: {} };
+  const base = { schemaVersion: SCHEMA_VERSION, dataDate: targetDate,
+    updatedAt: now.date + ' ' + now.time, freshness: slot === 'morning' ? 'verified' : 'provisional' };
+  let failed = 0;
+  publishGroup(DATA_DIR, { 'status.json': { ...status, state: 'running' } });
+  for (const group of [...Object.keys(FILTERS), ...INDICES.map(index => index.code)]) {
+    const names = GROUPS[group];
     try {
-      const { items: raw } = await fetchPage(filterStr, 'f3', '1', SECTOR_FIELDS.join(','), 100, 1);
-      const all = raw.map(transformSector);
-      const valid = all.filter(validateSector);
-      const rejected = all.length - valid.length;
-      if (rejected > 0) console.log(`  ⚠️ 校验拦截 ${rejected} 条异常数据`);
-      fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify({ updatedAt, source: '东方财富', data: valid }, null, 2));
-      console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
-      saveHistory(dataDir, type, valid);
-      lastFailed = false;
-    } catch (e) {
-      console.error(`❌ ${type} 抓取失败：${e.message}`);
-      lastFailed = true;
-    }
-    await sleep(30000 + Math.floor(Math.random() * 15000)); // 30~45s
-  }
-
-  // 资金流向数据（东方财富）
-  for (const [type, filterStr] of Object.entries(CAPITAL_FLOW_TYPES)) {
-    // 上一个请求失败时，多等 30s 给服务器冷却
-    if (lastFailed) {
-      console.log(`  ⏳ 上次请求失败，额外等待 30s 冷却...`);
-      await sleep(30000);
-    }
-    console.log(`Fetching ${type}...`);
-    try {
-      const { items: raw } = await fetchPage(filterStr, 'f62', '1', CAPITAL_FIELDS.join(','), 100, 1);
-      const all = raw.map(transformCapital);
-      const valid = all.filter(validateCapital);
-      const rejected = all.length - valid.length;
-      if (rejected > 0) console.log(`  ⚠️ 校验拦截 ${rejected} 条异常数据`);
-      fs.writeFileSync(path.join(dataDir, `${type}.json`), JSON.stringify({ updatedAt, source: '东方财富', data: valid }, null, 2));
-      console.log(`✓ ${type}.json saved (${valid.length} items, ${(fs.statSync(path.join(dataDir, `${type}.json`)).size / 1024).toFixed(0)}KB)`);
-      saveHistory(dataDir, type, valid);
-      lastFailed = false;
-    } catch (e) {
-      console.error(`❌ ${type} 抓取失败：${e.message}`);
-      lastFailed = true;
-    }
-    await sleep(30000 + Math.floor(Math.random() * 15000)); // 30~45s
-  }
-
-  // K 线数据（今天已存在则跳过）
-  const today = bj.dateStr;
-  const klineConfigs = [
-    { klt: 101, lmt: 120, suffix: 'daily' },
-    { klt: 102, lmt: 52, suffix: 'weekly' },
-    { klt: 1, lmt: 240, suffix: 'minute' },
-  ];
-  for (const idx of KLINE_INDICES) {
-    for (const { klt, lmt, suffix } of klineConfigs) {
-      const fileName = `${idx.id}-${suffix}.json`;
-      const filePath = path.join(dataDir, fileName);
-
-      // 缓存判断：今天已抓过就跳过
-      if (fs.existsSync(filePath)) {
-        const mtime = new Date(fs.statSync(filePath).mtimeMs);
-        const mParts = new Intl.DateTimeFormat('zh-CN', {
-          timeZone: 'Asia/Shanghai',
-          year: 'numeric', month: '2-digit', day: '2-digit',
-        }).formatToParts(mtime);
-        const mGet = (type) => mParts.find(p => p.type === type)?.value;
-        const mdate = `${mGet('year')}-${mGet('month')}-${mGet('day')}`;
-        if (mdate === today) {
-          console.log(`⏭️ ${fileName} 今天已抓取，跳过`);
-          continue;
-        }
+      if (isComplete(names, targetDate)) {
+        status.groups[group] = { state: 'cached', ...metadata(names) };
+        console.log(group + ' 目标交易日已有完整补采数据，跳过');
+        continue;
       }
-
-      console.log(`Fetching ${fileName}...`);
-      try {
-        const result = await fetchKline(idx, klt, lmt);
-        if (!validateKline(result.klines)) {
-          console.log(`  ❌ K线数据校验失败，跳过保存`);
-        } else {
-          fs.writeFileSync(filePath, JSON.stringify({ updatedAt, source: KLINE_SOURCE_NAMES[result.source], name: result.name || idx.name, klines: result.klines }));
-          console.log(`✓ ${fileName} saved (${result.klines.length} items, source: ${result.source})`);
+      const meta = { ...base, batchId: status.attemptedAt + '-' + group };
+      const output = {};
+      if (Object.hasOwn(FILTERS, group)) {
+        // clist是当前快照，不能在竞价/盘中用它伪造前一天的数据。
+        const time = beijingNow();
+        if (time.date !== now.date || (slot === 'morning' && time.time >= '09:15:00')) {
+          throw new Error('上午补采窗口已结束，保留旧快照；不把当日数据冒充前一交易日');
         }
-      } catch (e) {
-        console.error(`❌ ${fileName} 抓取失败：${e.message}`);
+        const result = await fetchBoards(group, targetDate);
+        const finished = beijingNow();
+        if (finished.date !== now.date || (slot === 'morning' && finished.time >= '09:15:00')) throw new Error('分页采集跨过补采窗口，丢弃本组');
+        const common = { ...meta, source: result.source, sourceUpdatedAt: result.sourceUpdatedAt };
+        output[names[0]] = { ...common, data: result.sectors };
+        if (result.capital) output[names[1]] = { ...common, data: result.capital };
+        for (const name of names) output['history/' + name.replace('.json', '-' + targetDate + '.json')] = output[name];
+      } else {
+        const index = INDICES.find(item => item.code === group);
+        const result = await fetchIndex(index, targetDate);
+        const common = { ...meta, source: result.source, name: index.name, volumeUnit: result.volumeUnit };
+        output[names[0]] = { ...common, klines: result.daily };
+        output[names[1]] = { ...common, derivedFrom: 'daily', klines: result.weekly };
       }
-      await sleep(2000); // K线间隔短一些（腾讯不限流）
+      publishGroup(DATA_DIR, output);
+      status.groups[group] = { state: 'updated', ...metadata(names) };
+      console.log(group + ' 更新完成：' + targetDate + ' / ' + base.freshness);
+    } catch (error) {
+      failed++;
+      status.groups[group] = { state: 'failed', ...metadata(names), error: error.message };
+      console.error(group + ' 失败，保留旧数据：' + error.message);
     }
   }
-
-  console.log('\nDone!');
+  status.state = failed === 0 ? 'ok' : failed === Object.keys(GROUPS).length ? 'failed' : 'partial';
+  status.completedAt = new Date().toISOString();
+  publishGroup(DATA_DIR, { 'status.json': status });
+  try { pruneHistory(DATA_DIR, now.date); } catch (error) { console.warn('历史清理失败：' + error.message); }
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const lines = ['## 数据采集 ' + slot + ' / ' + targetDate, '',
+      ...Object.entries(status.groups).map(([group, item]) => '- ' + group + ': ' + item.state +
+        '；数据日 ' + (item.dataDate || '旧版未知') + (item.error ? '；' + item.error : '')), ''];
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join(String.fromCharCode(10)));
+  }
+  if (failed) process.exitCode = 1;
 }
-
-main().catch(error => {
-  console.error('Error:', error.message);
-  process.exit(1);
-});
+if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
+module.exports = { main };

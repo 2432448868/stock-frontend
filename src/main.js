@@ -1,6 +1,6 @@
 import './styles/main.css';
 import { state } from './state.js';
-import { isTradingTime, getBeijingNow } from './utils.js';
+import { fetchSnapshot } from './utils.js';
 import { initMarket, onMarketTabOpen, rebuildChart, refreshMarket } from './market.js';
 import { initCapital, loadCapitalFlow } from './capital.js';
 import { initSector, loadSectorData } from './sector.js';
@@ -94,28 +94,41 @@ document.addEventListener('pointermove', e => {
   } else if (tiltEl) { tiltEl.classList.remove('tilting'); tiltEl = null; }
 }, { passive: true });
 
-// ========== 自动刷新 ==========
-setInterval(() => {
+// ========== 快照状态与静态文件刷新（不请求上游行情） ==========
+let refreshing = false;
+let lastRefreshAt = Date.now();
+async function loadCollectionStatus() {
   const el = document.getElementById('statusText');
-  const bj = getBeijingNow();
-  if (isTradingTime()) {
-    state.countdown--;
-    if (state.countdown <= 0) {
-      state.sectorData = {};
-      refreshMarket();
-      loadInsight();
-      loadSectorData();
-      loadCapitalFlow();
-      state.countdown = 1800;
-      document.querySelectorAll('#staleNotice, [style*="rgba(255,165,0"]').forEach(n => n.remove());
-    }
-    const cm = Math.floor(state.countdown / 60), cs = state.countdown % 60;
-    el.textContent = `东方财富 · 交易中 · ${bj.timeStr} · ${cm}:${String(cs).padStart(2, '0')} 后刷新`;
-  } else {
-    el.textContent = `东方财富 · 已休市 · ${bj.timeStr}`;
-    state.countdown = 1800;
+  const schedule = '非实时快照 · 计划北京时间09:00 / 15:00采集（休市跳过）';
+  try {
+    const status = await fetchSnapshot('status');
+    if (!status.groups || !['ok', 'partial', 'failed'].includes(status.state)) throw new Error('采集状态异常');
+    const entries = Object.values(status.groups);
+    const dates = [...new Set(entries.map(item => item.dataDate || '旧版日期未知'))].sort();
+    const failed = entries.filter(item => item.state === 'failed').length;
+    const pending = entries.some(item => item.freshness !== 'verified');
+    el.textContent = schedule + ' · 数据日 ' + dates.join(' / ') +
+      (failed ? ' · 上轮' + failed + '组失败，保留旧数据' : pending ? ' · 收盘值待次日补采' : ' · 次日补采完成');
+  } catch {
+    el.textContent = schedule + ' · 采集状态暂不可用，请以各面板数据日期为准';
   }
-}, 1000);
+}
+async function refreshSnapshots() {
+  if (refreshing || document.hidden) return;
+  refreshing = true;
+  lastRefreshAt = Date.now();
+  try {
+    state.sectorData = {};
+    await Promise.allSettled([refreshMarket(), loadInsight(), loadSectorData(), loadCapitalFlow(), loadCollectionStatus()]);
+  } finally { refreshing = false; }
+}
+setInterval(() => {
+  if (Date.now() - lastRefreshAt >= 30 * 60000) refreshSnapshots();
+}, 60000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && Date.now() - lastRefreshAt >= 30 * 60000) refreshSnapshots();
+});
+loadCollectionStatus();
 
 // ========== 开场动画：标题逐字浮起 ==========
 (function splitTitle() {

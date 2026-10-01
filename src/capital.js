@@ -1,5 +1,7 @@
 import { state } from './state.js';
-import { DATA_PATH, saveCache, loadCache, formatAmount, skeletonRows, nextFrame } from './utils.js';
+import { fetchSnapshot, describeData, escapeHtml, saveCache, loadCache, formatAmount, skeletonRows, nextFrame } from './utils.js';
+
+let capitalRequest = 0;
 
 function bindEvents() {
   document.querySelectorAll('.capital-type-btn').forEach(btn => {
@@ -13,26 +15,35 @@ function bindEvents() {
 }
 
 async function loadCapitalFlow() {
+  const request = ++capitalRequest;
+  const type = state.currentCapitalType;
   const tbody = document.getElementById('capitalBody');
+  document.getElementById('capitalStaleNotice')?.remove();
   tbody.innerHTML = skeletonRows(9);
   try {
-    const res = await fetch(`${DATA_PATH}/capital-${state.currentCapitalType}.json?t=${Date.now()}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = await fetchSnapshot('capital-' + type);
+    if (request !== capitalRequest) return;
     const list = data.data || data;
-    state.capitalTime = data.updatedAt || '';
-    saveCache('capital-' + state.currentCapitalType, { data: list, ts: Date.now(), updatedAt: state.capitalTime });
+    if (!Array.isArray(list) || !list.length) throw new Error('资金数据为空或格式异常');
+    state.capitalTime = describeData(data);
+    saveCache('capital-' + type, data);
     renderCapitalOverview(list);
     renderCapitalTable(list);
-  } catch (e) {
-    const cached = loadCache('capital-' + state.currentCapitalType);
+  } catch (error) {
+    if (request !== capitalRequest) return;
+    const cached = loadCache('capital-' + type);
     if (cached) {
+      state.capitalTime = describeData(cached) + ' · 离线缓存';
       renderCapitalOverview(cached.data);
       renderCapitalTable(cached.data);
-      document.getElementById('capitalOverview').insertAdjacentHTML('afterend',
-        `<div style="text-align:center;padding:6px;font-size:.75rem;color:var(--t2);background:var(--accent-soft);border-radius:999px;margin-bottom:12px">数据加载失败，显示缓存数据（${new Date(cached.ts).toLocaleTimeString('zh-CN')}）</div>`);
+      const notice = document.createElement('p');
+      notice.id = 'capitalStaleNotice';
+      notice.className = 'data-time';
+      notice.textContent = '网络加载失败，当前为缓存快照；缓存保存于 ' + new Date(cached.ts).toLocaleString('zh-CN');
+      document.getElementById('capitalOverview').after(notice);
     } else {
-      tbody.innerHTML = `<tr><td colspan="9" class="error"><div>加载失败：${e.message}</div><button class="retry-btn" id="retryCapital">重试</button></td></tr>`;
+      document.getElementById('capitalOverview').textContent = '当前分类暂无可用快照';
+      tbody.innerHTML = '<tr><td colspan="9" class="error">加载失败：' + escapeHtml(error.message) + '<button class="retry-btn" id="retryCapital">重试</button></td></tr>';
       document.getElementById('retryCapital')?.addEventListener('click', loadCapitalFlow);
     }
   }
@@ -53,12 +64,12 @@ function renderCapitalOverview(data) {
     <div class="ov-item"><span class="label">流出总额</span><span class="val down">${formatAmount(totalOut)}</span></div>
     <div class="ov-item"><span class="label">上涨板块</span><span class="val up">${upCount}</span></div>
     <div class="ov-item"><span class="label">下跌板块</span><span class="val down">${downCount}</span></div>
-    ${state.capitalTime ? `<div class="ov-item" style="grid-column:1/-1"><span class="label" style="font-size:.7rem;opacity:.5">数据获取时间</span><span class="val" style="font-size:.75rem;opacity:.6">${state.capitalTime}</span></div>` : ''}
+    ${state.capitalTime ? `<div class="ov-item" style="grid-column:1/-1"><span class="label" style="font-size:.7rem;opacity:.5">数据获取时间</span><span class="val" style="font-size:.75rem;opacity:.6">${escapeHtml(state.capitalTime)}</span></div>` : ''}
   `;
 }
 
 function renderCapitalTable(data) {
-  const maxFlow = Math.max(...data.map(d => Math.abs(d.mainNetFlow ?? 0)));
+  const maxFlow = Math.max(1, ...data.map(d => Math.abs(d.mainNetFlow ?? 0)));
   document.getElementById('capitalBody').innerHTML = data.map((d, i) => {
     const flow = d.mainNetFlow ?? 0;
     const cls = flow > 0 ? 'up' : flow < 0 ? 'down' : 'flat';
@@ -71,7 +82,7 @@ function renderCapitalTable(data) {
       <td><strong>${d.name}</strong><br><span class="sector-code">${d.code}</span></td>
       <td class="${cpCls}" style="font-weight:600">${sign}${cp.toFixed(2)}%</td>
       <td class="${cls}" style="font-weight:700">${formatAmount(flow)}</td>
-      <td><span class="${cls}">${(d.mainPercent ?? 0) >= 0 ? '+' : ''}${(d.mainPercent ?? 0).toFixed(2)}%</span><div class="flow-bar" data-w="${barWidth}" style="width:0;background:${flow > 0 ? 'var(--up)' : 'var(--down)'};opacity:.5"></div></td>
+      <td><span class="${cls}">${d.mainPercent == null ? '—' : (d.mainPercent >= 0 ? '+' : '') + d.mainPercent.toFixed(2) + '%'}</span><div class="flow-bar" data-w="${barWidth}" style="width:0;background:${flow > 0 ? 'var(--up)' : 'var(--down)'};opacity:.5"></div></td>
       <td class="hide-mobile ${cls}">${formatAmount(d.superNetFlow ?? 0)}</td>
       <td class="hide-mobile ${cls}">${formatAmount(d.bigNetFlow ?? 0)}</td>
       <td class="up">${d.upCount ?? 0}</td>

@@ -1,18 +1,23 @@
-import { DATA_PATH, formatAmount, insightSkeleton, countUp, nextFrame } from './utils.js';
+import { fetchSnapshot, describeData, escapeHtml, formatAmount, insightSkeleton, countUp, nextFrame } from './utils.js';
+
+let insightRequest = 0;
 
 async function loadInsight() {
+  const request = ++insightRequest;
   document.getElementById('insightContent').innerHTML = insightSkeleton();
   try {
-    const [sectorRes, capitalRes] = await Promise.all([
-      fetch(`${DATA_PATH}/industry.json?t=${Date.now()}`),
-      fetch(`${DATA_PATH}/capital-industry.json?t=${Date.now()}`),
-    ]);
-    const sectors = await sectorRes.json();
-    const capital = await capitalRes.json();
-    renderInsight(sectors.data || sectors, capital.data || capital, sectors.updatedAt);
+    const [sectors, capital] = await Promise.all([fetchSnapshot('industry'), fetchSnapshot('capital-industry')]);
+    if (request !== insightRequest) return;
+    if (sectors.schemaVersion !== 2 || capital.schemaVersion !== 2 || !sectors.batchId ||
+        sectors.batchId !== capital.batchId || sectors.dataDate !== capital.dataDate) {
+      throw new Error('行业与资金数据尚未完成同批次升级，暂停生成洞察，避免混算');
+    }
+    if (!Array.isArray(sectors.data) || !sectors.data.length || !Array.isArray(capital.data) || !capital.data.length) throw new Error('行业或资金数据为空');
+    renderInsight(sectors.data, capital.data, describeData(sectors));
   } catch (e) {
+    if (request !== insightRequest) return;
     document.getElementById('insightContent').innerHTML =
-      `<div class="error">洞察数据加载失败：${e.message}<br><button class="retry-btn" id="retryInsight">重试</button></div>`;
+      `<div class="error">洞察数据加载失败：${escapeHtml(e.message)}<br><button class="retry-btn" id="retryInsight">重试</button></div>`;
     document.getElementById('retryInsight')?.addEventListener('click', loadInsight);
   }
 }
@@ -61,7 +66,7 @@ function renderInsight(sectors, capital, updatedAt) {
   if (extremeUp >= 10) risks.push({ level: 'hot', text: `${extremeUp} 个板块涨幅超 5%，市场亢奋` });
   if (extremeDown >= 10) risks.push({ level: 'cold', text: `${extremeDown} 个板块跌幅超 5%，恐慌蔓延` });
   if (ratio > 3) risks.push({ level: 'warn', text: `涨跌比 ${ratio.toFixed(1)}:1，单边行情注意追高风险` });
-  if (ratio < 0.33) risks.push({ level: 'warn', text: `涨跌比 1:${(1/ratio).toFixed(1)}，普跌格局谨慎操作` });
+  if (ratio < 0.33) risks.push({ level: 'warn', text: up === 0 ? '无上涨板块，注意下行风险' : `涨跌比 1:${(1/ratio).toFixed(1)}，普跌格局谨慎操作` });
   if (profitTaking.length > 0) risks.push({ level: 'hot', text: `${profitTaking.length} 个强势板块资金在流出，主力可能在撤退` });
   if (total > 0 && topInflow[0]) {
     const concentration = topInflow.slice(0, 3).reduce((s, c) => s + (c.mainNetFlow ?? 0), 0) / Math.max(1, totalIn);
@@ -72,8 +77,8 @@ function renderInsight(sectors, capital, updatedAt) {
   // 渲染
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
-      <div style="font-size:1.05rem;font-weight:700">今日市场速览</div>
-      <div style="font-size:.72rem;color:var(--t2)">${total} 行业板块 · ${capital.length} 资金流${updatedAt ? ' · 更新于 ' + updatedAt : ''}</div>
+      <div style="font-size:1.05rem;font-weight:700">市场快照速览</div>
+      <div style="font-size:.72rem;color:var(--t2)">${total} 行业板块 · ${capital.length} 资金流${updatedAt ? ' · ' + escapeHtml(updatedAt) : ''}</div>
     </div>
     <div class="insight-grid">
       <div class="insight-card">

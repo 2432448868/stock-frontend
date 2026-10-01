@@ -1,5 +1,7 @@
 import { state } from './state.js';
-import { DATA_PATH, saveCache, loadCache, formatMarketCap, skeletonRows } from './utils.js';
+import { fetchSnapshot, describeData, escapeHtml, saveCache, loadCache, formatMarketCap, skeletonRows } from './utils.js';
+
+let sectorRequest = 0;
 
 function bindEvents() {
   document.querySelectorAll('.sector-type-btn').forEach(btn => {
@@ -9,7 +11,7 @@ function bindEvents() {
       state.currentSectorType = btn.dataset.stype;
       state.sortColumn = 'rank'; state.sortDir = 'asc'; state.searchQuery = '';
       document.getElementById('searchInput').value = '';
-      if (state.sectorData[state.currentSectorType]) renderSector(); else loadSectorData();
+      loadSectorData();
     });
   });
 
@@ -30,25 +32,36 @@ function bindEvents() {
 }
 
 async function loadSectorData() {
+  const request = ++sectorRequest;
+  const type = state.currentSectorType;
   const tbody = document.getElementById('sectorBody');
+  document.getElementById('staleNotice')?.remove();
   tbody.innerHTML = skeletonRows(8);
   try {
-    const res = await fetch(`${DATA_PATH}/${state.currentSectorType}.json?t=${Date.now()}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    state.sectorData[state.currentSectorType] = data.data || data;
-    state.sectorTime = data.updatedAt || '';
-    saveCache('sector-' + state.currentSectorType, { data: state.sectorData[state.currentSectorType], ts: Date.now(), updatedAt: state.sectorTime });
+    const data = await fetchSnapshot(type);
+    if (request !== sectorRequest) return;
+    const list = data.data || data;
+    if (!Array.isArray(list) || !list.length) throw new Error('板块数据为空或格式异常');
+    state.sectorData[type] = list;
+    state.sectorTime = describeData(data);
+    saveCache('sector-' + type, data);
     renderSector();
-  } catch (e) {
-    const cached = loadCache('sector-' + state.currentSectorType);
+  } catch (error) {
+    if (request !== sectorRequest) return;
+    const cached = loadCache('sector-' + type);
     if (cached) {
-      state.sectorData[state.currentSectorType] = cached.data;
+      state.sectorData[type] = cached.data;
+      state.sectorTime = describeData(cached) + ' · 离线缓存';
       renderSector();
-      document.getElementById('sectorOverview').insertAdjacentHTML('afterend',
-        `<div id="staleNotice" style="text-align:center;padding:6px;font-size:.75rem;color:var(--t2);background:var(--accent-soft);border-radius:999px;margin-bottom:8px">数据加载失败，显示缓存数据（${new Date(cached.ts).toLocaleTimeString('zh-CN')}）</div>`);
+      const notice = document.createElement('p');
+      notice.id = 'staleNotice';
+      notice.className = 'data-time';
+      notice.textContent = '网络加载失败，当前为缓存快照；缓存保存于 ' + new Date(cached.ts).toLocaleString('zh-CN');
+      document.getElementById('sectorOverview').after(notice);
     } else {
-      tbody.innerHTML = `<tr><td colspan="8" class="error"><div>加载失败：${e.message}</div><button class="retry-btn" id="retrySector">重试</button></td></tr>`;
+      state.sectorData[type] = [];
+      document.getElementById('sectorOverview').textContent = '当前分类暂无可用快照';
+      tbody.innerHTML = '<tr><td colspan="8" class="error">加载失败：' + escapeHtml(error.message) + '<button class="retry-btn" id="retrySector">重试</button></td></tr>';
       document.getElementById('retrySector')?.addEventListener('click', loadSectorData);
     }
   }
@@ -115,7 +128,7 @@ function renderSectorOverview(data) {
     <div class="ov-item"><span class="label">平均涨幅</span><span class="val ${avgCls}">${avg >= 0 ? '+' : ''}${avg.toFixed(2)}%</span></div>
     <div class="ov-item hide-mobile"><span class="label">最强</span><span class="val up">${s[0]?.name || '-'}</span></div>
     <div class="ov-item hide-mobile"><span class="label">最弱</span><span class="val down">${s[s.length - 1]?.name || '-'}</span></div>
-    ${state.sectorTime ? `<div class="ov-item" style="grid-column:1/-1"><span class="label" style="font-size:.7rem;opacity:.5">数据获取时间</span><span class="val" style="font-size:.75rem;opacity:.6">${state.sectorTime}</span></div>` : ''}
+    ${state.sectorTime ? `<div class="ov-item" style="grid-column:1/-1"><span class="label" style="font-size:.7rem;opacity:.5">数据获取时间</span><span class="val" style="font-size:.75rem;opacity:.6">${escapeHtml(state.sectorTime)}</span></div>` : ''}
   `;
 }
 

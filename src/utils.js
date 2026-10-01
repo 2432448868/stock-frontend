@@ -6,18 +6,37 @@ export const INDICES = [
   { secid: '0.399006', name: '创业板指' },
 ];
 
-// 本地缓存（错误降级用）
-export function saveCache(key, data) {
-  try { localStorage.setItem('cache_' + key, JSON.stringify({ data, ts: Date.now() })); } catch (e) {}
+// 静态数据读取有独立超时；不会触发行情源采集。
+export async function fetchSnapshot(name) {
+  const res = await fetch(DATA_PATH + '/' + name + '.json?t=' + Date.now(), { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
 }
 
+export function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+export function describeData(data) {
+  if (data.schemaVersion !== 2) return '旧版数据（口径待升级） · 采集 ' + (data.updatedAt || '时间未知');
+  return '数据日 ' + data.dataDate + ' · ' +
+    (data.freshness === 'verified' ? '次日补采' : '盘后快照，收盘值待确认') +
+    ' · ' + data.source + ' · 采集 ' + data.updatedAt;
+}
+
+// 统一缓存封装，并兼容旧版多包了一层的缓存。
+export function saveCache(key, data) {
+  try { localStorage.setItem('cache_' + key, JSON.stringify({ data, ts: Date.now() })); } catch {}
+}
 export function loadCache(key) {
   try {
     const raw = localStorage.getItem('cache_' + key);
     if (!raw) return null;
     const { data, ts } = JSON.parse(raw);
-    return { data, stale: Date.now() - ts > 3600000 };
-  } catch (e) { return null; }
+    const snapshot = Array.isArray(data) ? { data } : data;
+    if (!Array.isArray(snapshot?.data) || !Number.isFinite(ts)) return null;
+    return { ...snapshot, ts, stale: Date.now() - ts > 3600000 };
+  } catch { return null; }
 }
 
 // 金额格式化

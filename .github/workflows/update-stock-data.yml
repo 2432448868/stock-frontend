@@ -1,35 +1,83 @@
 name: Update Stock Data
 
 on:
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: 'auto按北京时间选择；morning补前一交易日，afternoon抓当日快照'
+        type: choice
+        options: [auto, morning, afternoon]
+        default: auto
   schedule:
-    # 北京时间 15:30（UTC 07:30），交易日收盘半小时后数据稳定；仅工作日
-    - cron: '30 7 * * 1-5'
+    - cron: '0 1 * * 1-5' # 北京时间09:00
+    - cron: '0 7 * * 1-5' # 北京时间15:00
+
+concurrency:
+  group: stock-data-update
+  cancel-in-progress: false
 
 jobs:
   update-data:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+      sha: ${{ steps.commit.outputs.sha }}
+      fetch_outcome: ${{ steps.fetch.outputs.outcome }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
       - name: Fetch stock data
-        run: node fetch-data.cjs
-
-      - name: Commit and push if changed
+        id: fetch
+        env:
+          FETCH_SLOT: ${{ github.event_name == 'schedule' && (github.event.schedule == '0 1 * * 1-5' && 'morning' || 'afternoon') || inputs.slot || 'auto' }}
+        run: |
+          # 数据失败仍发布旧数据和失败说明；最后由独立作业明确报失败。
+          set +e
+          node fetch-data.cjs
+          code=$?
+          if [ "$code" -eq 0 ]; then
+            echo "outcome=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=failure" >> "$GITHUB_OUTPUT"
+          fi
+          # 防止进程被中断后把半成品发布出去。
+          node scripts/data/check-publication.cjs
+      - name: Commit data and status if changed
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add public/data/
+          git add -- ':(glob)public/data/*.json' ':(glob)public/data/history/*.json'
           if ! git diff --staged --quiet; then
-            git commit -m "chore: update stock data $(date '+%Y-%m-%d %H:%M:%S')"
+            git commit -m "chore: update daily market snapshots"
             git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No changes, skipping."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  deploy:
+    needs: update-data
+    if: needs.update-data.outputs.changed == 'true'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/static.yml
+    with:
+      deploy_ref: ${{ needs.update-data.outputs.sha }}
+  report-failure:
+    needs: [update-data, deploy]
+    if: always() && needs.update-data.outputs.fetch_outcome == 'failure'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: |
+          echo "采集存在失败；可发布的旧数据/状态已交由部署作业处理，请检查采集摘要与部署结果。"
+          exit 1
