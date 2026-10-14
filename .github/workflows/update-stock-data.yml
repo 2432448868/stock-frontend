@@ -8,9 +8,6 @@ on:
         type: choice
         options: [auto, morning, afternoon]
         default: auto
-  schedule:
-    - cron: '0 1 * * 1-5' # 北京时间09:00
-    - cron: '0 7 * * 1-5' # 北京时间15:00
 
 concurrency:
   group: stock-data-update
